@@ -2,16 +2,23 @@
 // mapped onto N64 controller 1.
 //
 // Keyboard: arrows = stick, X = A, C = B, Z = Z (VRU talk button), A = L, S = R,
-//           Enter = Start, I/J/K/L = C-up/left/down/right, T/F/G/H = D-pad.
+//           Enter = Start, I/J/K/L = C-up/left/down/right, T/F/G/H = D-pad,
+//           Tab = word picker ("say" a word; Z is held automatically).
 // Controller: left stick = stick, A = A, B/X = B, left trigger = Z,
 //             LB = L, RB/right trigger = R, Start = Start, right stick = C buttons,
 //             D-pad = D-pad.
 #include <algorithm>
+#include <chrono>
 #include <cmath>
+#include <cstdlib>
+#include <string>
+#include <utility>
+#include <vector>
 
 #include "SDL.h"
 
 #include "hyp_input.h"
+#include "hyp_vru.h"
 
 namespace {
     enum : uint16_t {
@@ -101,6 +108,42 @@ bool hyp::input::get_n64_input(int controller_num, uint16_t* buttons, float* x, 
         }
     }
 
+    // Test aid: HYP_PRESS="start@8,a@12,z@20" taps buttons (0.25 s) at fixed times.
+    {
+        static std::vector<std::pair<double, uint16_t>> presses = [] {
+            std::vector<std::pair<double, uint16_t>> p;
+            const char* env = std::getenv("HYP_PRESS");
+            if (env == nullptr) return p;
+            struct { const char* name; uint16_t bit; } names[] = {
+                { "a", N64_A }, { "b", N64_B }, { "z", N64_Z }, { "start", N64_START }, { "l", N64_L }, { "r", N64_R },
+                { "up", N64_DU }, { "down", N64_DD }, { "left", N64_DL }, { "right", N64_DR },
+            };
+            std::string spec = env;
+            size_t pos = 0;
+            while (pos < spec.size()) {
+                size_t end = spec.find(',', pos);
+                std::string item = spec.substr(pos, end == std::string::npos ? std::string::npos : end - pos);
+                size_t at = item.find('@');
+                for (const auto& n : names) {
+                    if (at != std::string::npos && item.substr(0, at) == n.name) p.emplace_back(std::atof(item.c_str() + at + 1), n.bit);
+                }
+                if (end == std::string::npos) break;
+                pos = end + 1;
+            }
+            return p;
+        }();
+        static const auto start = std::chrono::steady_clock::now();
+        double t = std::chrono::duration<double>(std::chrono::steady_clock::now() - start).count();
+        for (const auto& [when, bit] : presses) {
+            if (t >= when && t < when + 0.25) b |= bit;
+        }
+    }
+
+    // A word was picked/spoken: hold the talk button so the game listens for it.
+    if (hyp::vru::talk_button_held()) {
+        b |= N64_Z;
+    }
+
     *buttons = b;
     *x = std::clamp(sx, -1.0f, 1.0f) * stick_range;
     *y = std::clamp(sy, -1.0f, 1.0f) * stick_range;
@@ -114,10 +157,13 @@ void hyp::input::set_rumble(int controller_num, bool rumble) {
 }
 
 ultramodern::input::connected_device_info_t hyp::input::get_connected_device_info(int controller_num) {
-    // Port 1: the player's controller. Port 4 is where the real game expects the VRU;
-    // the voice unit is emulated separately through the osVoice* runtime functions.
+    // Port 1: the player's controller. Port 4: the VRU (reported as CONT_TYPE_VOICE,
+    // which the game checks before osVoiceInit); its osVoice* calls are emulated in src/vru.
     if (controller_num == 0) {
         return { ultramodern::input::Device::Controller, ultramodern::input::Pak::None };
+    }
+    if (controller_num == 3) {
+        return { ultramodern::input::Device::VRU, ultramodern::input::Pak::None };
     }
     return { ultramodern::input::Device::None, ultramodern::input::Pak::None };
 }

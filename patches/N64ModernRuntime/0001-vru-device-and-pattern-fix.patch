@@ -1,0 +1,42 @@
+diff --git a/ultramodern/include/ultramodern/input.hpp b/ultramodern/include/ultramodern/input.hpp
+index 1dab1b8..4bc5e68 100644
+--- a/ultramodern/include/ultramodern/input.hpp
++++ b/ultramodern/include/ultramodern/input.hpp
+@@ -9,7 +9,7 @@ namespace ultramodern {
+             None,
+             Controller,
+             // Mouse,
+-            // VRU,
++            VRU,
+         };
+ 
+         enum class Pak {
+diff --git a/ultramodern/src/input.cpp b/ultramodern/src/input.cpp
+index 03a7c6b..050d372 100644
+--- a/ultramodern/src/input.cpp
++++ b/ultramodern/src/input.cpp
+@@ -42,12 +42,12 @@ static u16 get_controller_type(ultramodern::input::Device device_type) {
+     case ultramodern::input::Device::Controller:
+         return CONT_TYPE_NORMAL;
+ 
++    case ultramodern::input::Device::VRU:
++        return CONT_TYPE_VOICE;
++
+ #if 0
+     case ultramodern::input::Device::Mouse:
+         return CONT_TYPE_MOUSE;
+-
+-    case ultramodern::input::Device::VRU:
+-        return CONT_TYPE_VOICE;
+ #endif
+     }
+ 
+@@ -71,7 +71,7 @@ static void __osContGetInitData(u8* pattern, OSContStatus *data) {
+             data[controller].status = device_info.connected_pak != ultramodern::input::Pak::None;
+             data[controller].err_no = 0x00;
+ 
+-            *pattern = 1 << controller;
++            *pattern |= 1 << controller;
+         }
+         else {
+             // Mark controller as not connected

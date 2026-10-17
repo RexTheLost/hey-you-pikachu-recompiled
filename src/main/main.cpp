@@ -34,6 +34,7 @@
 #include "hyp_input.h"
 #include "hyp_render.h"
 #include "hyp_trace.h"
+#include "hyp_vru.h"
 
 extern "C" void recomp_entrypoint(uint8_t* rdram, recomp_context* ctx);
 gpr get_entrypoint_address();
@@ -89,7 +90,45 @@ namespace {
         return ultramodern::renderer::WindowHandle{ wm_info.info.win.window, GetCurrentThreadId() };
     }
 
+    // Test aid: HYP_VRU_SAY="word@seconds[,word@seconds...]" says words at fixed
+    // times after launch (seconds since the window was created).
+    void run_scripted_speech() {
+        static std::vector<std::pair<double, std::string>> script = [] {
+            std::vector<std::pair<double, std::string>> s;
+            if (const char* env = std::getenv("HYP_VRU_SAY")) {
+                std::string spec = env;
+                size_t pos = 0;
+                while (pos < spec.size()) {
+                    size_t end = spec.find(',', pos);
+                    std::string item = spec.substr(pos, end == std::string::npos ? std::string::npos : end - pos);
+                    size_t at = item.rfind('@');
+                    if (at != std::string::npos) s.emplace_back(std::atof(item.c_str() + at + 1), item.substr(0, at));
+                    if (end == std::string::npos) break;
+                    pos = end + 1;
+                }
+            }
+            return s;
+        }();
+        static const auto start = std::chrono::steady_clock::now();
+        double t = std::chrono::duration<double>(std::chrono::steady_clock::now() - start).count();
+        for (auto it = script.begin(); it != script.end();) {
+            if (t >= it->first) {
+                bool ok = hyp::vru::say_word(it->second);
+                std::printf("[vru] scripted say '%s' at %.1fs: %s\n", it->second.c_str(), t, ok ? "queued" : "not in dictionary");
+                it = script.erase(it);
+            } else {
+                ++it;
+            }
+        }
+    }
+
     void update_gfx(void*) {
+        run_scripted_speech();
+        static bool picker_opened = false;
+        if (!picker_opened && std::getenv("HYP_PICKER") != nullptr) {
+            picker_opened = true; // test aid: open the word picker at launch
+            hyp::vru::toggle_picker();
+        }
         SDL_Event event;
         while (SDL_PollEvent(&event)) {
             switch (event.type) {
@@ -101,6 +140,9 @@ namespace {
                     hyp::input::handle_controller_event(event);
                     break;
                 case SDL_KEYDOWN:
+                    if (event.key.keysym.scancode == SDL_SCANCODE_TAB && !event.key.repeat) {
+                        hyp::vru::toggle_picker();
+                    }
                     if (event.key.keysym.scancode == SDL_SCANCODE_F11 ||
                         (event.key.keysym.scancode == SDL_SCANCODE_RETURN && (event.key.keysym.mod & KMOD_ALT))) {
                         auto config = ultramodern::renderer::get_graphics_config();

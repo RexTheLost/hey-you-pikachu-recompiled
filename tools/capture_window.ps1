@@ -1,6 +1,6 @@
 # Capture only the game's window (not the desktop) to a PNG.
 # Usage: powershell -File tools\capture_window.ps1 <process name> <out.png>
-param([string]$ProcessName, [string]$OutPath)
+param([string]$ProcessName, [string]$OutPath, [string]$WindowClass = "")
 Add-Type -AssemblyName System.Drawing
 Add-Type @"
 using System; using System.Runtime.InteropServices;
@@ -13,7 +13,12 @@ public static class Win {
   [DllImport("user32.dll")] public static extern bool ShowWindow(IntPtr h, int cmd);
 }
 "@
+Add-Type -Name FW -Namespace U -MemberDefinition '[DllImport("user32.dll", CharSet=CharSet.Unicode)] public static extern IntPtr FindWindow(string c, string t);'
 $p = Get-Process $ProcessName -ErrorAction Stop | Where-Object { $_.MainWindowHandle -ne 0 } | Select-Object -First 1
+if ($WindowClass) {   # capture another top-level window of the app by its window class
+    $h = [U.FW]::FindWindow($WindowClass, [NullString]::Value)
+    $p = [pscustomobject]@{ MainWindowHandle = $h; MainWindowTitle = $WindowClass }
+}
 $r = New-Object Win+RECT
 [Win]::GetClientRect($p.MainWindowHandle, [ref]$r) | Out-Null
 $bmp = New-Object System.Drawing.Bitmap ([Math]::Max(1, $r.R - $r.L)), ([Math]::Max(1, $r.B - $r.T))

@@ -67,6 +67,8 @@ target_sources(HeyYouPikachuRecompiled PRIVATE
     ${CMAKE_SOURCE_DIR}/src/runtime_gaps.cpp
     ${CMAKE_SOURCE_DIR}/src/debug_trace.cpp
     ${CMAKE_SOURCE_DIR}/src/overlay_hooks.cpp
+    ${CMAKE_SOURCE_DIR}/src/vru/vru.cpp
+    ${CMAKE_SOURCE_DIR}/src/vru/vru_picker.cpp
     ${CMAKE_SOURCE_DIR}/rsp/n_aspMain.cpp
 )
 target_compile_definitions(HeyYouPikachuRecompiled PRIVATE HYP_ROM_XXH3=0x9D29140FAB450973ULL)

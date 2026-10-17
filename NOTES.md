@@ -10,8 +10,17 @@ ROM: `D:\AI\Hey You, Pikachu! (USA).z64`
   - archive reader: `func_80049E44`
 
 ## Status (2026-10-17)
-- **Boots and renders on PC.** It reaches the game's own "microphone/VRU not connected, press START" screen (`docs/first_boot.png`), and runs stably at about 60 VI/s with 2 display lists per VI.
-- Next: emulate the VRU (osVoice*). Then test past the START prompt.
+- **Boots, passes the VRU check, and plays.** Normal boot sequence → title screen → new game → first 3D scene, with voice commands delivered to the game.
+- **VRU emulation** (`src/vru/`):
+  - `osVoice*` are implemented in the runtime with no game patches. Words are identified by matching `osVoiceSetWord` phoneme blobs against the game's word table in RDRAM (`0x8010452C`).
+  - Picker window: **Tab** in the game window opens it (`docs/vru_picker.png`). It lists the current dictionary; Enter/double-click says the word.
+  - "Saying" a word holds Z (the talk button) until the game listens, then returns the slot with `distance` 0x100 and `voice_level` 1000.
+  - Port 4 reports `CONT_TYPE_VOICE`. This needed a runtime patch: `patches/N64ModernRuntime/0001`, which enables `Device::VRU` and fixes `__osContGetInitData` overwriting the controller presence bitmask instead of OR-ing into it.
+- **Known issue:** textured 3D models (Pikachu, fences) render flat white. 2D, text and backgrounds are fine. Likely a combiner/texture issue in RT64 with this GBI; next to investigate.
+- Next:
+  - fix the white 3D models
+  - microphone recognizer (Vosk/whisper.cpp, constrained to the current dictionary)
+  - VRU word picker polish
 
 ## Microcode
 - `F3DAM fifo 2.05` (Yasumoto) at ROM `0xA9126`. RT64 already knew it as `F3DAM2.fifo 2.05` but mapped it to `Unknown`. Our patch maps it to **F3DEX2**: its display lists are standard F3DEX2.
@@ -168,6 +177,9 @@ Stability findings:
   - `HYP_DUMP_STACKS_AFTER=<s>`: symbolized stacks of all threads, with source lines
   - `HYP_DL_DUMP=<file>`: display lists of the first 30 tasks
   - `HYP_ON_TOP=1`: always-on-top window, for captures
+  - `HYP_PRESS="start@10,a@14"`: scripted button taps
+  - `HYP_VRU_SAY="Pikachu@60,hello@75"`: scripted speech
+  - `HYP_PICKER=1`: open the word picker at launch
   - A crash handler prints a symbolized stack with source lines.
   - `tools/capture_window.ps1` captures only the game window.
 - App sources:
