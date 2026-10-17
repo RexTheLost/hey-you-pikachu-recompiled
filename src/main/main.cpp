@@ -23,6 +23,8 @@
 #include <DbgHelp.h>
 #include <TlHelp32.h>
 #pragma comment(lib, "Dbghelp.lib")
+#include <commdlg.h>
+#pragma comment(lib, "Comdlg32.lib")
 #endif
 
 #include "ultramodern/ultra64.h"
@@ -386,6 +388,17 @@ namespace {
 }
 
 int main(int argc, char** argv) {
+#ifdef _WIN32
+    // GUI-subsystem exe: show a console only when diagnostics are requested and output
+    // isn't already redirected (e.g. by a test harness).
+    if ((std::getenv("HYP_CONSOLE") != nullptr || std::getenv("HYP_TRACE") != nullptr) &&
+        GetFileType(GetStdHandle(STD_OUTPUT_HANDLE)) == FILE_TYPE_UNKNOWN) {
+        if (AttachConsole(ATTACH_PARENT_PROCESS) || AllocConsole()) {
+            std::freopen("CONOUT$", "w", stdout);
+            std::freopen("CONOUT$", "w", stderr);
+        }
+    }
+#endif
     // Unbuffered so runtime/trace output survives a crash when redirected to a file.
     std::setvbuf(stdout, nullptr, _IONBF, 0);
 #ifdef _WIN32
@@ -429,6 +442,22 @@ int main(int argc, char** argv) {
         if (rom_arg.empty()) {
             rom_arg = program_dir() / "baserom.us.z64";
         }
+#ifdef _WIN32
+        // First run without a ROM next to the exe: let the player pick it.
+        if (!std::filesystem::exists(rom_arg)) {
+            wchar_t file[MAX_PATH] = L"";
+            OPENFILENAMEW ofn{ sizeof(ofn) };
+            ofn.lpstrFilter = L"N64 ROM (*.z64;*.n64;*.v64)\0*.z64;*.n64;*.v64\0All files\0*.*\0";
+            ofn.lpstrFile = file;
+            ofn.nMaxFile = MAX_PATH;
+            ofn.lpstrTitle = L"Select your Hey You, Pikachu! (USA) ROM";
+            ofn.Flags = OFN_FILEMUSTEXIST | OFN_PATHMUSTEXIST;
+            if (!GetOpenFileNameW(&ofn)) {
+                return EXIT_SUCCESS; // cancelled
+            }
+            rom_arg = file;
+        }
+#endif
         switch (recomp::select_rom(rom_arg, id)) {
             case recomp::RomValidationError::Good:
                 break;

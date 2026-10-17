@@ -107,8 +107,9 @@ if (WIN32)
             "${CMAKE_SOURCE_DIR}/lib/rt64/src/contrib/dxc/bin/x64/dxcompiler.dll"
             $<TARGET_FILE_DIR:HeyYouPikachuRecompiled>)
 
-    # Console window in all configs for now: stdout carries RT64/runtime diagnostics.
-    set_target_properties(HeyYouPikachuRecompiled PROPERTIES LINK_FLAGS "/SUBSYSTEM:CONSOLE")
+    # GUI app (no console window). main() attaches/opens a console when HYP_CONSOLE or
+    # HYP_TRACE is set; redirected stdout/stderr (test runs) keep working either way.
+    set_target_properties(HeyYouPikachuRecompiled PROPERTIES LINK_FLAGS "/SUBSYSTEM:WINDOWS /ENTRY:mainCRTStartup")
 endif()
 
 target_link_libraries(HeyYouPikachuRecompiled PRIVATE
