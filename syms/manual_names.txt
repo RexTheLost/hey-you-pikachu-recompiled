@@ -3,6 +3,7 @@
 8004C8A0 osVoiceInit
 8004CAAC osVoiceSetWord
 8004CDA4 osVoiceClearDictionary
+8004CC5C osVoiceMaskDictionary
 # game-side voice wrapper
 800404E8 vruInit
 80040608 vruClearDict

@@ -7,3 +7,4 @@ RecompiledFuncs/
 external/
 asm/
 *.log
+build/
