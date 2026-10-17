@@ -20,6 +20,13 @@ ROM: `D:\AI\Hey You, Pikachu! (USA).z64`
   - F3DAM keeps the **texture T scale at `G_MW_FOG + 0x10`**. The game's gSPTexture emits `G_TEXTURE` with S only (T field 0), immediately followed by `DB080010 0000TTTT`.
   - RT64 first treated that write as the fog factor, which made every lit model white. After that was fixed, it ignored the write and left T = 0, which smeared textures (streaky ground, faceless Pikachu).
   - Now offset 0 sets fog and offset 0x10 sets `textureState.tc`. Verified: textured ground, trees, and Pikachu's face (`docs/title_fixed.png`, `docs/gameplay_say_something.png`).
+- Release packaging (`tools/package.ps1`):
+  - GUI exe with no console window (set `HYP_CONSOLE=1` for one).
+  - ROM picker on first run.
+  - Zip of exe + SDL2 + DXC DLLs + README. The zip contains no ROM; the stored ROM copy lands in `data\` only when the game runs.
+- Saves:
+  - EEPROM 4K probe and reads work (the file menu shows its slots).
+  - Writes are **not yet confirmed in real play**. The game saves at day boundaries; the file should appear as `data\saves\<id>.bin`.
 - Next:
   - microphone recognizer (Vosk/whisper.cpp, constrained to the current dictionary)
   - VRU word picker polish
