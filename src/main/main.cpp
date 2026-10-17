@@ -169,7 +169,37 @@ namespace {
     uint32_t discarded_output_frames;
     constexpr uint32_t bytes_per_frame = input_channels * sizeof(float);
 
+    // Debug: HYP_AUDIO_DUMP=<file.raw> appends the game's output (16-bit stereo, L/R
+    // after the channel fix, at the game's sample rate) as raw PCM.
+    void dump_audio(const int16_t* audio_data, size_t sample_count) {
+        static FILE* f = std::getenv("HYP_AUDIO_DUMP") ? std::fopen(std::getenv("HYP_AUDIO_DUMP"), "wb") : nullptr;
+        if (f == nullptr) return;
+        for (size_t i = 0; i + 1 < sample_count; i += 2) {
+            int16_t lr[2] = { audio_data[i + 1], audio_data[i + 0] };
+            std::fwrite(lr, sizeof(lr), 1, f);
+        }
+        std::fflush(f);
+    }
+
     void queue_samples(int16_t* audio_data, size_t sample_count) {
+        dump_audio(audio_data, sample_count);
+        if (hyp_trace_enabled()) {
+            // per-second production stats: buffers, frames, buffer size range
+            static auto window_start = std::chrono::steady_clock::now();
+            static uint32_t calls = 0, frames = 0, min_frames = ~0u, max_frames = 0;
+            calls++;
+            frames += (uint32_t)(sample_count / 2);
+            min_frames = std::min(min_frames, (uint32_t)(sample_count / 2));
+            max_frames = std::max(max_frames, (uint32_t)(sample_count / 2));
+            auto now = std::chrono::steady_clock::now();
+            if (now - window_start >= std::chrono::seconds(1)) {
+                std::printf("[audio] %u buffers/s, %u frames/s (rate %u), per buffer %u..%u, queued %u B\n",
+                            calls, frames, sample_rate, min_frames, max_frames, SDL_GetQueuedAudioSize(audio_device));
+                calls = frames = max_frames = 0;
+                min_frames = ~0u;
+                window_start = now;
+            }
+        }
         static std::vector<float> swap_buffer;
         static std::array<float, duplicated_input_frames * input_channels> duplicated_sample_buffer;
 
@@ -200,12 +230,15 @@ namespace {
             return;
         }
 
-        uint64_t cur_queued_microseconds = uint64_t(SDL_GetQueuedAudioSize(audio_device)) / bytes_per_frame * 1000000 / sample_rate;
+        // The SDL queue holds converted audio: float frames of output_channels at output_sample_rate.
+        uint64_t cur_queued_microseconds = uint64_t(SDL_GetQueuedAudioSize(audio_device)) /
+                                           (output_channels * sizeof(float)) * 1000000 / output_sample_rate;
         uint32_t num_bytes_to_queue = audio_convert.len_cvt - output_channels * discarded_output_frames * sizeof(swap_buffer[0]);
         float* samples_to_queue = swap_buffer.data() + output_channels * discarded_output_frames / 2;
 
-        // Skip samples when too much audio is already queued, to keep latency bounded.
-        uint32_t skip_factor = cur_queued_microseconds / 100000;
+        // Safety valve: skip samples only if far too much audio is queued (normally the AI
+        // event pacing keeps the queue near its low-water mark, ~40 ms).
+        uint32_t skip_factor = cur_queued_microseconds / 200000;
         if (skip_factor != 0) {
             uint32_t skip_ratio = 1 << skip_factor;
             num_bytes_to_queue /= skip_ratio;
@@ -239,6 +272,7 @@ namespace {
     }
 
     void set_frequency(uint32_t freq) {
+        if (hyp_trace_enabled()) std::printf("[audio] game sample rate %u Hz\n", freq);
         sample_rate = freq;
         update_audio_converter();
     }
@@ -417,6 +451,9 @@ int main(int argc, char** argv) {
 
     SDL_InitSubSystem(SDL_INIT_AUDIO);
     reset_audio(48000);
+    // The game's audio thread makes one 184-sample frame per AI buffer-completion event
+    // (~174/s at 32 kHz), not one per video frame: pace AI events by buffer consumption.
+    ultramodern::set_ai_buffer_pacing(true, 40);
 
     // Saves, stored ROM and config live next to the exe (kept off the system drive).
     std::filesystem::path data_dir = program_dir() / "data";

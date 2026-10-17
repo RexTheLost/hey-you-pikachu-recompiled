@@ -1,0 +1,110 @@
+diff --git a/ultramodern/include/ultramodern/ultramodern.hpp b/ultramodern/include/ultramodern/ultramodern.hpp
+index db45ee4..7c2cb7d 100644
+--- a/ultramodern/include/ultramodern/ultramodern.hpp
++++ b/ultramodern/include/ultramodern/ultramodern.hpp
+@@ -98,6 +98,16 @@ void init_audio();
+ void set_audio_frequency(uint32_t freq);
+ void queue_audio_buffer(RDRAM_ARG PTR(s16) audio_data, uint32_t byte_count);
+ uint32_t get_remaining_audio_bytes();
++uint32_t get_audio_frequency();
++
++// AI event pacing. By default the AI event is sent once per VI, which suits games that
++// generate one audio frame per video frame. Games that generate small fixed-size frames
++// on each AI buffer-completion event (e.g. Hey You, Pikachu!: 184 samples at 32 kHz)
++// need the event paced by audio consumption instead: with this enabled, one event is
++// sent whenever buffered audio drops below low_water_ms, and the next only after the
++// game queues its buffer. Call before the game starts.
++void set_ai_buffer_pacing(bool enabled, uint32_t low_water_ms);
++void notify_ai_buffer_queued();
+ 
+ struct audio_callbacks_t {
+     using queue_samples_t = void(int16_t*, size_t);
+diff --git a/ultramodern/src/audio.cpp b/ultramodern/src/audio.cpp
+index 3198be0..5af5f70 100644
+--- a/ultramodern/src/audio.cpp
++++ b/ultramodern/src/audio.cpp
+@@ -33,6 +33,11 @@ void ultramodern::queue_audio_buffer(RDRAM_ARG PTR(int16_t) audio_data_, uint32_
+     if (sample_count > 0 && audio_callbacks.queue_samples) {
+         audio_callbacks.queue_samples(TO_PTR(int16_t, audio_data_), sample_count);
+     }
++    ultramodern::notify_ai_buffer_queued();
++}
++
++uint32_t ultramodern::get_audio_frequency() {
++    return sample_rate;
+ }
+ 
+ // For SDL2
+diff --git a/ultramodern/src/events.cpp b/ultramodern/src/events.cpp
+index 46f63f1..493175b 100644
+--- a/ultramodern/src/events.cpp
++++ b/ultramodern/src/events.cpp
+@@ -170,6 +170,45 @@ uint64_t total_vis = 0;
+ 
+ 
+ extern std::atomic_bool exited;
++
++// AI event pacing by buffer consumption (see ultramodern::set_ai_buffer_pacing).
++static std::atomic_bool ai_buffer_pacing = false;
++static std::atomic_uint32_t ai_low_water_ms = 50;
++static std::atomic_bool ai_event_outstanding = false;
++static std::thread ai_thread;
++
++void ultramodern::set_ai_buffer_pacing(bool enabled, uint32_t low_water_ms) {
++    ai_low_water_ms = low_water_ms;
++    ai_buffer_pacing = enabled;
++}
++
++void ultramodern::notify_ai_buffer_queued() {
++    ai_event_outstanding = false;
++}
++
++void ai_thread_func() {
++    ultramodern::set_native_thread_name("AI Thread");
++    using namespace std::chrono_literals;
++    while (!exited) {
++        ultramodern::sleep_milliseconds(1);
++        if (!ai_buffer_pacing || !ultramodern::is_game_started() || ai_event_outstanding) {
++            continue;
++        }
++        uint32_t frames_left = ultramodern::get_remaining_audio_bytes() / (2 * sizeof(int16_t));
++        uint32_t low_water_frames = ultramodern::get_audio_frequency() * ai_low_water_ms / 1000;
++        if (frames_left >= low_water_frames) {
++            continue;
++        }
++        uint8_t* rdram = events_context.rdram;
++        std::lock_guard lock{ events_context.message_mutex };
++        if (events_context.ai.mq != NULLPTR) {
++            ai_event_outstanding = true;
++            if (osSendMesg(PASS_RDRAM events_context.ai.mq, events_context.ai.msg, OS_MESG_NOBLOCK) == -1) {
++                ai_event_outstanding = false; // queue full; retry next tick
++            }
++        }
++    }
++}
+ extern moodycamel::LightweightSemaphore graphics_shutdown_ready;
+ 
+ void set_dummy_vi(bool odd);
+@@ -237,7 +276,7 @@ void vi_thread_func() {
+                 }
+                 remaining_retraces = cur_state->retrace_count;
+             }
+-            if (events_context.ai.mq != NULLPTR) {
++            if (events_context.ai.mq != NULLPTR && !ai_buffer_pacing) {
+                 if (osSendMesg(PASS_RDRAM events_context.ai.mq, events_context.ai.msg, OS_MESG_NOBLOCK) == -1) {
+                     //printf("Game skipped a AI frame!\n");
+                 }
+@@ -604,11 +643,13 @@ void ultramodern::init_events(RDRAM_ARG ultramodern::renderer::WindowHandle wind
+     }
+ 
+     events_context.vi.thread = std::thread{ vi_thread_func };
++    ai_thread = std::thread{ ai_thread_func };
+ }
+ 
+ void ultramodern::join_event_threads() {
+     events_context.sp.gfx_thread.join();
+     events_context.vi.thread.join();
++    ai_thread.join();
+ 
+     // Send a null RSP task to indicate that the RSP task thread should exit.
+     events_context.sp_task_queue.enqueue(nullptr);

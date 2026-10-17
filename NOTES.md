@@ -35,6 +35,12 @@ ROM: `D:\AI\Hey You, Pikachu! (USA).z64`
   - Save API: `func_800045C0` (write request, type-5 message to the service thread `func_80002650`) and `func_8000451C` (read).
   - Block 0 holds a 1-byte header; files are at blocks 1+.
   - Test aid: `HYP_FORCE_SAVE_AT=<s>` (hooked into the game-logic frame loop at `0x8000BC34`; never from the service thread, which would self-deadlock).
+- **Audio fixed** (`patches/N64ModernRuntime/0002-ai-buffer-pacing.patch`):
+  - The game's audio thread (`func_8004982C`) makes one fixed **184-sample** frame (hardcoded `0xB8` in the audio init `func_8001F680`) per AI buffer-completion event. On hardware that's ~174 buffers/s at 32 kHz.
+  - The runtime sent AI events once per VI (60/s). The game therefore produced only ~11 k frames/s for a 32 kHz output, and playback starved (garbled sound).
+  - New opt-in runtime mode `ultramodern::set_ai_buffer_pacing(true, 40)`: an AI thread sends one event whenever buffered audio drops below 40 ms, and the next after `osAiSetNextBuffer`. Measured: 174–175 buffers/s, 32.0 k frames/s, queue steady at about 55 ms.
+  - Also fixed the latency limiter adapted from Zelda64Recomp. It computed queued time with the input rate instead of the output format, overestimated it 1.5×, and dropped samples. It's now a 200 ms safety valve.
+  - Debug: `HYP_AUDIO_DUMP=<file.raw>` writes raw 16-bit stereo at the game rate; `HYP_TRACE` logs per-second production.
 - License: GPL-3.0 (`COPYING`), included in the release zip.
 - Next:
   - microphone recognizer (Vosk/whisper.cpp, constrained to the current dictionary)
