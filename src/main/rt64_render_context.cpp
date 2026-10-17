@@ -295,6 +295,26 @@ static void dump_display_list(const uint8_t* rdram, uint32_t dl_addr, uint32_t t
         std::fprintf(dl_dump_file, "%*s%08X: %08X %08X\n", depth * 2, "", pc, w0, w1);
         printed++;
         pc += 8;
+        if (op == 0xDA) {                                          // G_MTX: decode s15.16 matrix
+            uint32_t m = resolve(w1);
+            float f[16];
+            for (int i = 0; i < 16; i++) {
+                // integer halves in words 0-7, fractional halves in words 8-15 (two per word, big-endian order)
+                uint32_t iw = word(m + (i / 2) * 4), fw = word(m + 32 + (i / 2) * 4);
+                int16_t ip = (int16_t)((i & 1) ? (iw & 0xFFFF) : (iw >> 16));
+                uint16_t fp = (uint16_t)((i & 1) ? (fw & 0xFFFF) : (fw >> 16));
+                f[i] = ip + fp / 65536.0f;
+            }
+            std::fprintf(dl_dump_file, "%*s  mtx(param %02X): [%g %g %g %g] [%g %g %g %g] [%g %g %g %g] [%g %g %g %g]\n",
+                         depth * 2, "", w0 & 0xFF, f[0], f[1], f[2], f[3], f[4], f[5], f[6], f[7],
+                         f[8], f[9], f[10], f[11], f[12], f[13], f[14], f[15]);
+        }
+        if (op == 0x01) {                                          // G_VTX: first vertex position
+            uint32_t v = resolve(w1);
+            uint32_t a = word(v), b = word(v + 4);
+            std::fprintf(dl_dump_file, "%*s  vtx0: %d %d %d\n", depth * 2, "",
+                         (int16_t)(a >> 16), (int16_t)(a & 0xFFFF), (int16_t)(b >> 16));
+        }
         if (op == 0xDB && ((w0 >> 16) & 0xFF) == 0x06) {         // G_MOVEWORD G_MW_SEGMENT
             segments[((w0 & 0xFFFF) / 4) & 0xF] = w1 & 0x3FFFFFF;
         } else if (op == 0xDE) {                                   // G_DL
@@ -312,7 +332,9 @@ void hyp::renderer::RT64Context::send_dl(const OSTask* task) {
     if (dl_count == 0 && std::getenv("HYP_DL_DUMP") != nullptr) {
         dl_dump_file = std::fopen(std::getenv("HYP_DL_DUMP"), "w");
     }
-    if (dl_dump_file != nullptr && dl_count < 30) {
+    // HYP_DL_DUMP_FROM=<task index> picks where the 30-task window starts (default 0).
+    static const uint32_t dump_from = std::getenv("HYP_DL_DUMP_FROM") ? (uint32_t)std::atoi(std::getenv("HYP_DL_DUMP_FROM")) : 0;
+    if (dl_dump_file != nullptr && dl_count >= dump_from && dl_count < dump_from + 30) {
         dump_display_list(app->core.RDRAM, task->t.data_ptr, dl_count);
     }
     dl_count++;

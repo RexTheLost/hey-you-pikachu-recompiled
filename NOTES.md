@@ -16,9 +16,13 @@ ROM: `D:\AI\Hey You, Pikachu! (USA).z64`
   - Picker window: **Tab** in the game window opens it (`docs/vru_picker.png`). It lists the current dictionary; Enter/double-click says the word.
   - "Saying" a word holds Z (the talk button) until the game listens, then returns the slot with `distance` 0x100 and `voice_level` 1000.
   - Port 4 reports `CONT_TYPE_VOICE`. This needed a runtime patch: `patches/N64ModernRuntime/0001`, which enables `Device::VRU` and fixes `__osContGetInitData` overwriting the controller presence bitmask instead of OR-ing into it.
-- **Known issue:** textured 3D models (Pikachu, fences) render flat white. 2D, text and backgrounds are fine. Likely a combiner/texture issue in RT64 with this GBI; next to investigate.
+- **3D rendering fixed** (`patches/rt64/0002`):
+  - F3DAM writes a second parameter at `G_MW_FOG + 0x10` (values `0x7FFF`/`0x4000`/`0`, many per frame). RT64 treated it as the fog factor (mul 0, offset 0x7FFF), which fogged every lit/fogged model to the white fog color.
+  - RT64 now honours only offset 0.
+  - Models in this game are vertex-lit, not textured.
+  - The meaning of `+0x10` is unknown. It's probably a fade/alpha scale (1.0/0.5/0); check whether faded objects need it.
+- Visual check pending: ground textures look streaky in the first forest scene. Compare against real hardware or an LLE emulator (ParaLLEl-RDP).
 - Next:
-  - fix the white 3D models
   - microphone recognizer (Vosk/whisper.cpp, constrained to the current dictionary)
   - VRU word picker polish
 
@@ -175,7 +179,7 @@ Stability findings:
 - Debug switches (environment variables):
   - `HYP_TRACE=1`: `[dma]`/`[lzh]`/`[stage]`/`[ovl]`/`[aud]`/`[gfx]` logs
   - `HYP_DUMP_STACKS_AFTER=<s>`: symbolized stacks of all threads, with source lines
-  - `HYP_DL_DUMP=<file>`: display lists of the first 30 tasks
+  - `HYP_DL_DUMP=<file>`: display lists of 30 tasks, starting at `HYP_DL_DUMP_FROM` (default 0); includes decoded `G_MTX` matrices and first vertex positions
   - `HYP_ON_TOP=1`: always-on-top window, for captures
   - `HYP_PRESS="start@10,a@14"`: scripted button taps
   - `HYP_VRU_SAY="Pikachu@60,hello@75"`: scripted speech
