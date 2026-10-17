@@ -201,6 +201,12 @@ bool hyp::input::get_n64_input(int controller_num, uint16_t* buttons, float* x, 
     // Test aid: live commands from the HYP_CONTROL file.
     hyp::control::apply_input(&b, &sx, &sy);
 
+    // Microphone: the player's own Z press is push-to-talk; keep Z held for the game
+    // while the utterance is being finished and recognized.
+    if (hyp::vru::mic_talk_update((b & N64_Z) != 0)) {
+        b |= N64_Z;
+    }
+
     // A word was picked/spoken: hold the talk button so the game listens for it.
     if (hyp::vru::talk_button_held()) {
         b |= N64_Z;

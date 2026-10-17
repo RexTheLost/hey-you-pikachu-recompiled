@@ -13,6 +13,7 @@
 
 #include "ultramodern/ultramodern.hpp"
 
+#include "hyp_asr.h"
 #include "hyp_control.h"
 #include "hyp_vru.h"
 
@@ -75,6 +76,18 @@ namespace {
             std::string word; std::getline(in >> std::ws, word);
             bool ok = hyp::vru::say_word(word);
             std::printf("[control] say '%s': %s\n", word.c_str(), ok ? "queued" : "not in dictionary");
+        } else if (cmd == "speak") {
+            // speak <file.wav>: hold Z and use the clip as the microphone utterance
+            std::string path; std::getline(in >> std::ws, path);
+            std::vector<float> pcm;
+            if (hyp::asr::read_wav(path, pcm)) {
+                hyp::vru::mic_inject(std::move(pcm));
+                std::lock_guard lock{ mutex };
+                held_buttons |= button_bit("z");
+                buttons_until = now + std::chrono::milliseconds(300);
+            } else {
+                std::printf("[control] can't read %s\n", path.c_str());
+            }
         } else if (cmd == "save") {
             save_requested = true;
         } else if (cmd == "shot") {

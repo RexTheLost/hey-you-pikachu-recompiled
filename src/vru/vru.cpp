@@ -48,6 +48,7 @@ namespace {
     std::chrono::steady_clock::time_point listen_start;
 
     int pending_slot = -1;
+    bool pending_reject = false;   // mic heard something that matched no word
     std::chrono::steady_clock::time_point pending_since;
 
     std::vector<uint16_t> read_blob(uint8_t* rdram, gpr addr) {
@@ -135,11 +136,19 @@ bool hyp::vru::say_word(const std::string& word) {
     return slot >= 0 && say_slot(slot);
 }
 
+void hyp::vru::say_unrecognized() {
+    std::lock_guard lock{ mutex };
+    pending_slot = -1;
+    pending_reject = true;
+    pending_since = std::chrono::steady_clock::now();
+}
+
 bool hyp::vru::talk_button_held() {
     std::lock_guard lock{ mutex };
-    if (pending_slot < 0) return false;
+    if (pending_slot < 0 && !pending_reject) return false;
     if (!is_listening && std::chrono::steady_clock::now() - pending_since > talk_timeout) {
         pending_slot = -1; // the game didn't listen; drop it
+        pending_reject = false;
         return false;
     }
     return true;
@@ -170,6 +179,7 @@ extern "C" void osVoiceClearDictionary_recomp(uint8_t* rdram, recomp_context* ct
     dict.clear();
     dict_generation++;
     pending_slot = -1;
+    pending_reject = false;
     ctx->r2 = 0;
 }
 
@@ -187,7 +197,7 @@ extern "C" void osVoiceSetWord_recomp(uint8_t* rdram, recomp_context* ctx) {
 
 // s32 osVoiceStartReadData(OSVoiceHandle* handle)
 extern "C" void osVoiceStartReadData_recomp(uint8_t* rdram, recomp_context* ctx) {
-    std::lock_guard lock{ mutex };
+    std::unique_lock lock{ mutex };
     MEM_W(HANDLE_MODE, ctx->r4) = 1;
     set_status(rdram, ctx->r4, 0);
     is_listening = true;
@@ -197,15 +207,20 @@ extern "C" void osVoiceStartReadData_recomp(uint8_t* rdram, recomp_context* ctx)
         for (size_t i = 0; i < dict.size() && i < 12; i++) std::printf(" %s", dict[i].name.c_str());
         std::printf("%s\n", dict.size() > 12 ? " ..." : "");
     }
+    bool picked = pending_slot >= 0;
+    lock.unlock();
+    if (!picked) hyp::vru::mic_listen_start(); // the player is talking: record the mic
     ctx->r2 = 0;
 }
 
 // s32 osVoiceStopReadData(OSVoiceHandle* handle)
 extern "C" void osVoiceStopReadData_recomp(uint8_t* rdram, recomp_context* ctx) {
-    std::lock_guard lock{ mutex };
+    std::unique_lock lock{ mutex };
     MEM_W(HANDLE_MODE, ctx->r4) = 0;
     set_status(rdram, ctx->r4, 0);
     is_listening = false;
+    lock.unlock();
+    hyp::vru::mic_listen_stop();
     ctx->r2 = 0;
 }
 
@@ -216,7 +231,7 @@ extern "C" void osVoiceGetReadData_recomp(uint8_t* rdram, recomp_context* ctx) {
     std::lock_guard lock{ mutex };
 
     auto now = std::chrono::steady_clock::now();
-    bool ready = is_listening && pending_slot >= 0 && pending_slot < (int)dict.size() &&
+    bool ready = is_listening && ((pending_slot >= 0 && pending_slot < (int)dict.size()) || pending_reject) &&
                  now - listen_start >= utterance_delay;
     if (!ready) {
         set_status(rdram, handle, 0);
@@ -230,15 +245,19 @@ extern "C" void osVoiceGetReadData_recomp(uint8_t* rdram, recomp_context* ctx) {
     MEM_H(0x04, data) = 1000;    // voice_level (game requires >= 200)
     MEM_H(0x06, data) = 40;      // voice_sn (signal/noise)
     MEM_H(0x08, data) = 800;     // voice_time
-    MEM_H(0x0A, data) = (int16_t)pending_slot;
-    MEM_H(0x14, data) = 0x100;   // distance[0] (game accepts <= 2000)
+    MEM_H(0x0A, data) = (int16_t)(pending_reject ? 0 : pending_slot);
+    MEM_H(0x14, data) = pending_reject ? 3000 : 0x100; // distance[0] (game accepts <= 2000)
     for (int i = 1; i < 5; i++) {
         MEM_H(0x0A + i * 2, data) = 0x7FFF;
         MEM_H(0x14 + i * 2, data) = 0x7FFF;
     }
-    if (hyp_trace_enabled()) std::printf("[vru] heard slot %d (%s)\n", pending_slot, dict[pending_slot].name.c_str());
+    if (hyp_trace_enabled()) {
+        if (pending_reject) std::printf("[vru] heard nothing usable (rejected result)\n");
+        else std::printf("[vru] heard slot %d (%s)\n", pending_slot, dict[pending_slot].name.c_str());
+    }
 
     pending_slot = -1;
+    pending_reject = false;
     is_listening = false;
     MEM_W(HANDLE_MODE, handle) = 0;
     set_status(rdram, handle, 0);

@@ -135,6 +135,17 @@ namespace {
     void update_gfx(void*) {
         run_scripted_speech();
         hyp::control::poll();
+        // Show what the microphone heard in the title bar for a few seconds.
+        {
+            static std::string shown;
+            std::string heard = hyp::vru::mic_last_heard(4.0);
+            if (heard != shown && window != nullptr) {
+                shown = heard;
+                std::string title = "Hey You, Pikachu! Recompiled";
+                if (!heard.empty()) title += "   —   heard: " + heard;
+                SDL_SetWindowTitle(window, title.c_str());
+            }
+        }
         static bool picker_opened = false;
         if (!picker_opened && std::getenv("HYP_PICKER") != nullptr) {
             picker_opened = true; // test aid: open the word picker at launch
@@ -504,6 +515,8 @@ int main(int argc, char** argv) {
     {
         const auto& s = hyp::settings::get();
         hyp::audio::set_volume(s.muted ? 0.0f : s.volume / 100.0f);
+        // Microphone speech recognition (loads the model in the background).
+        hyp::vru::mic_init(data_dir / "models" / "ggml-base.en.bin", s.microphone);
     }
     // The game's audio thread makes one 184-sample frame per AI buffer-completion event
     // (~174/s at 32 kHz), not one per video frame: pace AI events by buffer consumption.

@@ -205,7 +205,8 @@ Stability findings:
   - `HYP_VRU_SAY="Pikachu@60,hello@75"`: scripted speech
   - `HYP_PICKER=1`: open the word picker at launch
   - `HYP_FORCE_SAVE_AT=<s>`: trigger the game's save routine (test)
-  - `HYP_CONTROL=<file>`: live test control; the game runs lines appended to the file: `press <button> [secs]`, `stick <x> <y> <secs>`, `say <word>`, `save`, `shot <png>`, `quit` (src/debug_control.cpp)
+  - `HYP_CONTROL=<file>`: live test control; the game runs lines appended to the file: `press <button> [secs]`, `stick <x> <y> <secs>`, `say <word>`, `speak <wav>`, `save`, `shot <png>`, `quit` (src/debug_control.cpp)
+  - `HYP_ASR_AUDIO_CTX=<n>`: override whisper's encoder window (0 = full 30 s); `HYP_ASR_LOG=1`: whisper/ggml logs
   - `HYP_PRESS` also supports `sup/sdown/sleft/sright` (analog stick)
   - A crash handler prints a symbolized stack with source lines.
   - `tools/capture_window.ps1` captures only the game window.
@@ -252,6 +253,15 @@ Stability findings:
 ## Tooling
 - venv with rabbitizer, spimdisasm, splat64, m2c (in the session scratchpad; recreate as needed)
 - `tools/dump_vru_dict.py <rom> <out.json>`
+
+## Microphone recognizer (src/vru/vru_mic.cpp, src/vru/asr.cpp)
+- whisper.cpp v1.9.4 submodule (lib/whisper.cpp), static CPU build with AVX2/FMA/F16C (`GGML_NATIVE OFF`, so it runs on Haswell+). Model: `data/models/ggml-base.en.bin` (sha1 137c4040...), dev copy in `models/` (gitignored).
+- Push-to-talk follows the game: Z held -> game calls osVoiceStartReadData -> `mic_listen_start` records (with 0.3 s pre-roll). Ends on Z release, 0.7 s silence after speech, or 5 s. While recognizing, `mic_talk_update` keeps Z held so the game keeps listening; the result goes through `say_slot` like the picker, or `say_unrecognized` (distance 3000, which voiceGetEvent rejects).
+- Recognition: greedy decode, `initial_prompt` = active words, `audio_ctx` = max(256, len*50+128) (~0.3 s vs ~0.8 s for the full 30 s window), `max_tokens` 12.
+- Matching (asr.cpp `match`): letters edit-distance ratio vs a sound-alike key (vowel runs -> class a / e,i,y / o,u; short keys down-weighted); windows of the transcript; penalties for extra words and late position (whisper loops on short clips: "Pikachu, pikachu, pika pika..."). Accept >= 0.66.
+- Tests: `asr_test <model> <wav> phrases...` / `asr_test x --text "<transcript>" phrases...`; Windows TTS clips (System.Speech, David/Zira) of 24 phrases: 46-47/48 correct with 124-458 word vocabularies, all out-of-vocabulary words rejected, ~0.3 s each.
+- In-game test aid: HYP_CONTROL `speak <file.wav>` presses Z and uses the clip as the utterance (`mic_inject`).
+- `[mic] no speech heard (loudest 0.0000 ...)` means the capture is digital silence: hardware-muted or dead mic (Windows privacy and levels were fine in that case).
 
 ## Window menu (src/main/menu.cpp)
 - Win32 menu bar on the SDL window, handled by subclassing SDL's window procedure (menu messages arrive on the window/update_gfx thread). Device lists are rebuilt on WM_INITMENUPOPUP.

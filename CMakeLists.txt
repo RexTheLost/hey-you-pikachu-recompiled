@@ -34,6 +34,16 @@ add_compile_definitions(HLSL_CPU)
 
 add_subdirectory(${CMAKE_SOURCE_DIR}/lib/rt64 ${CMAKE_BINARY_DIR}/rt64)
 add_subdirectory(${CMAKE_SOURCE_DIR}/lib/N64ModernRuntime)
+
+# whisper.cpp (MIT) — offline speech recognition for the emulated VRU microphone.
+# Portable CPU build (AVX2/FMA/F16C, i.e. Haswell or newer), static, no extras.
+set(GGML_NATIVE OFF CACHE BOOL "" FORCE)
+set(GGML_CCACHE OFF CACHE BOOL "" FORCE)
+set(BUILD_SHARED_LIBS OFF CACHE BOOL "" FORCE)
+set(WHISPER_BUILD_TESTS OFF CACHE BOOL "" FORCE)
+set(WHISPER_BUILD_EXAMPLES OFF CACHE BOOL "" FORCE)
+set(WHISPER_BUILD_SERVER OFF CACHE BOOL "" FORCE)
+add_subdirectory(${CMAKE_SOURCE_DIR}/lib/whisper.cpp ${CMAKE_BINARY_DIR}/whisper EXCLUDE_FROM_ALL)
 target_include_directories(rt64 PRIVATE ${CMAKE_BINARY_DIR}/rt64/src)
 
 # RecompiledFuncs — N64Recomp output (regenerate with tools/regen.sh)
@@ -72,6 +82,8 @@ target_sources(HeyYouPikachuRecompiled PRIVATE
     ${CMAKE_SOURCE_DIR}/src/overlay_hooks.cpp
     ${CMAKE_SOURCE_DIR}/src/vru/vru.cpp
     ${CMAKE_SOURCE_DIR}/src/vru/vru_picker.cpp
+    ${CMAKE_SOURCE_DIR}/src/vru/vru_mic.cpp
+    ${CMAKE_SOURCE_DIR}/src/vru/asr.cpp
     ${CMAKE_SOURCE_DIR}/rsp/n_aspMain.cpp
 )
 target_compile_definitions(HeyYouPikachuRecompiled PRIVATE HYP_ROM_XXH3=0x9D29140FAB450973ULL)
@@ -120,4 +132,10 @@ target_link_libraries(HeyYouPikachuRecompiled PRIVATE
     librecomp
     ultramodern
     rt64
+    whisper
 )
+
+# Recognizer test tool: asr_test <model.bin> <16-bit wav> "word one" "word two" ...
+add_executable(asr_test ${CMAKE_SOURCE_DIR}/src/vru/asr_test.cpp ${CMAKE_SOURCE_DIR}/src/vru/asr.cpp)
+target_include_directories(asr_test PRIVATE ${CMAKE_SOURCE_DIR}/include)
+target_link_libraries(asr_test PRIVATE whisper)

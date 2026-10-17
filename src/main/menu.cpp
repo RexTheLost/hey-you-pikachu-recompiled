@@ -203,7 +203,14 @@ namespace {
         }
         if (shown_mics.empty()) AppendMenuW(mic_menu, MF_STRING | MF_GRAYED, 0, L"(no microphones found)");
         AppendMenuW(mic_menu, MF_SEPARATOR, 0, nullptr);
-        AppendMenuW(mic_menu, MF_STRING | MF_GRAYED, 0, L"Speech recognition is coming; use the word picker (Tab) for now");
+        const wchar_t* status = L"";
+        switch (hyp::vru::mic_status()) {
+            case hyp::vru::MicStatus::Ready: status = L"Speech recognition ready: hold Z, say a word, let go"; break;
+            case hyp::vru::MicStatus::Loading: status = L"Speech recognition: loading the speech model…"; break;
+            case hyp::vru::MicStatus::NoModel: status = L"Speech model missing: put ggml-base.en.bin in data\\models"; break;
+            case hyp::vru::MicStatus::NoMicrophone: status = L"Could not open this microphone"; break;
+        }
+        AppendMenuW(mic_menu, MF_STRING | MF_GRAYED, 0, status);
     }
 
     void update_checks() {
@@ -326,6 +333,7 @@ namespace {
             hyp::input::select_controller(s.controller);
         } else if (id == ID_INPUT_MIC_DEFAULT || (id >= ID_INPUT_MIC_FIRST && id < ID_INPUT_MIC_FIRST + shown_mics.size())) {
             s.microphone = id == ID_INPUT_MIC_DEFAULT ? "" : shown_mics[id - ID_INPUT_MIC_FIRST];
+            hyp::vru::mic_set_device(s.microphone);
         } else if (id == ID_INPUT_PICKER) {
             hyp::vru::toggle_picker();
         } else if (id == ID_HELP_CONTROLS) {

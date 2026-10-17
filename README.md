@@ -29,14 +29,19 @@ The Voice Recognition Unit is emulated. You pick what to say from a word list no
 ### Menu bar
 The window has a menu bar (click it, or press Alt). Your choices are saved in `data\settings.json`.
 - **Game**: open the save folder, exit.
-- **Graphics**: fullscreen, window size, rendering resolution (Original 320×240, 2×, or Match window for the sharpest picture), aspect ratio (4:3 or an experimental widescreen fill), anti-aliasing.
+- **Graphics**: fullscreen, window size, rendering resolution (Original 320Ã—240, 2Ã—, or Match window for the sharpest picture), aspect ratio (4:3 or an experimental widescreen fill), anti-aliasing.
 - **Audio**: output device (switches immediately), volume, mute.
 - **Input**: which controller to use (or keyboard only), which microphone to use, and the word picker.
   - The microphone choice is stored for the upcoming speech recognizer; for now, talk with the word picker.
 - **Help**: controls, about.
 
 ### Talking to Pikachu
-Press **Tab** to open the word picker. It lists exactly the words the game understands at that moment, and the list changes as you move between scenes.
+**With a microphone:** hold **Z** (keyboard) or the **left trigger**, say the word, and let go.
+- Speech is recognized offline on your PC (whisper.cpp) and matched to the words the game is listening for right then. It takes about a third of a second.
+- What was heard appears briefly in the window title. If nothing matches, Pikachu reacts as if it didn't understand.
+- Choose the microphone in **Input â†’ Microphone**. The speech model is `data\models\ggml-base.en.bin` (included in the release zip).
+
+**Without a microphone:** press **Tab** to open the word picker. It lists exactly the words the game understands at that moment, and the list changes as you move between scenes.
 - Type to filter.
 - Press Enter or double-click a word to say it. The talk button is held automatically.
 
@@ -59,9 +64,17 @@ What these do:
 - `tools/regen.sh` regenerates `RecompiledFuncs/` and `rsp/n_aspMain.cpp` from `rom/baserom.us.z64`. It needs `.venv` with spimdisasm, plus `build/n64recomp` (built from `lib/N64ModernRuntime/N64Recomp`). See NOTES.md.
 - `tools/package.ps1` builds Release and creates `build/dist/HeyYouPikachuRecompiled-win64.zip`.
 
+For the microphone, download the speech model (148 MB, MIT license) into `models\`:
+```bat
+curl -L -o models\ggml-base.en.bin https://huggingface.co/ggerganov/whisper.cpp/resolve/main/ggml-base.en.bin
+```
+Copy it to `build\win\data\models\` for a dev build. `tools\package.ps1` puts it in the release folder.
+
 Reverse-engineering notes, the memory map, the VRU interface and all porting gotchas are in [NOTES.md](NOTES.md).
 
 ## Licensing
 This project is licensed under the **GNU General Public License v3.0**; see [COPYING](COPYING). Parts of `src/main` are adapted from Zelda64Recomp (also GPL-3.0).
+
+Speech recognition uses [whisper.cpp](https://github.com/ggml-org/whisper.cpp) and its `base.en` model (both MIT; see `LICENSE-whisper.cpp.txt` in the release).
 
 The licence covers this repository's own code. It does not cover *Hey You, Pikachu!*, which remains the property of its rights holders. Recompiled game code, the ROM and game assets are not part of this repository or its release packages.

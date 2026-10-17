@@ -10,3 +10,4 @@ asm/
 build/
 .venv/
 rsp/*.cpp
+models/
