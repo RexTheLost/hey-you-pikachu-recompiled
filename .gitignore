@@ -9,3 +9,4 @@ asm/
 *.log
 build/
 .venv/
+rsp/*.cpp

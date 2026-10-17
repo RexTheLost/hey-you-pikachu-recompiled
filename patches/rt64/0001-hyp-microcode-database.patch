@@ -1,0 +1,13 @@
+diff --git a/src/gbi/rt64_gbi.cpp b/src/gbi/rt64_gbi.cpp
+index 7006549..d78852a 100644
+--- a/src/gbi/rt64_gbi.cpp
++++ b/src/gbi/rt64_gbi.cpp
+@@ -100,7 +100,7 @@ namespace RT64 {
+     const GBIInstance   F3DEX2_FIFO_2_05          = { "F3DEX2.fifo 2.05",                          GBIUCode::F3DEX2,      { false,  false,  false,  false,  false } };
+     const GBIInstance   F3DEX2_FIFO_2_05_REJ      = { "F3DEX2.fifo 2.05.Rej",                      GBIUCode::F3DEX2,      { false,  false,  true,   false,  false } }; // Needs confirmation.
+     const GBIInstance   F3DLX2_FIFO_2_05_REJ      = { "F3DLX2.fifo 2.05.Rej",                      GBIUCode::F3DEX2,      { true,   false,  true,   false,  false } }; // Needs confirmation.
+-    const GBIInstance   F3DAM2_FIFO_2_05          = { "F3DAM2.fifo 2.05",                          GBIUCode::Unknown,     { false,  false,  false,  false,  false } }; // Needs confirmation.
++    const GBIInstance   F3DAM2_FIFO_2_05          = { "F3DAM2.fifo 2.05",                          GBIUCode::F3DEX2,      { false,  false,  false,  false,  false } }; // Confirmed: Hey You, Pikachu! (NPGE) display lists use F3DEX2 opcodes.
+     const GBIInstance   F3DEX2_FIFO_2_06          = { "F3DEX2.fifo 2.06",                          GBIUCode::F3DEX2,      { false,  false,  false,  false,  false } }; // Needs confirmation.
+     const GBIInstance   F3DEX2_FIFO_2_06_REJ      = { "F3DEX2.fifo 2.06.Rej",                      GBIUCode::F3DEX2,      { false,  false,  true,   false,  false } }; // Needs confirmation.
+     const GBIInstance   F3DLX2_FIFO_2_06_REJ      = { "F3DLX2.fifo 2.06.Rej",                      GBIUCode::F3DEX2,      { true,   false,  true,   false,  false } }; // Needs confirmation.

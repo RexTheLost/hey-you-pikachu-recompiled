@@ -13,3 +13,25 @@ stubs = []
 #   vimgr_text_0180 = VI manager thread body (osCreateViManager)
 #   func_80051E48   = motor.c static helper (osMotorInit / __osMotorAccess)
 ignored = ["vimgr_text_0180", "func_80051E48"]
+
+# --- Debug trace hooks (stage-code loading investigation; see src/debug_trace.cpp) ---
+[[patches.hook]]
+func = "dmaCopy"
+before_vram = 0x80037B1C
+text = "hyp_trace_dma(rdram, ctx);"
+
+[[patches.hook]]
+func = "func_8002D010"
+before_vram = 0x8002D010
+text = "hyp_trace_decompress(rdram, ctx);"
+
+[[patches.hook]]
+func = "func_80033A70"
+before_vram = 0x80033A70
+text = "hyp_trace_stage_load(rdram, ctx);"
+
+# Register every overlay the game loads with the runtime (src/overlay_hooks.cpp).
+[[patches.hook]]
+func = "overlayLoad"
+before_vram = 0x800135C0
+text = "hyp_on_overlay_load(rdram, ctx);"

@@ -2485,3 +2485,370 @@ functions = [
     { name = "func_80123390", vram = 0x80123390, size = 0xA0 },
 ]
 
+[[section]]
+name = "ovl00"
+rom = 0xDCF60
+vram = 0x80134270
+size = 0x230
+
+functions = [
+    { name = "ovl00_func_80134270", vram = 0x80134270, size = 0x8 },
+    { name = "ovl00_func_80134278", vram = 0x80134278, size = 0xFC },
+    { name = "ovl00_func_80134374", vram = 0x80134374, size = 0x12C },
+]
+
+[[section]]
+name = "ovl01"
+rom = 0x107190
+vram = 0x80134270
+size = 0x190
+
+functions = [
+    { name = "ovl01_func_80134270", vram = 0x80134270, size = 0x68 },
+    { name = "ovl01_func_801342D8", vram = 0x801342D8, size = 0x128 },
+]
+
+[[section]]
+name = "ovl02"
+rom = 0x10F7F0
+vram = 0x80134270
+size = 0x2B0
+
+functions = [
+    { name = "ovl02_func_80134270", vram = 0x80134270, size = 0xA4 },
+    { name = "ovl02_func_80134314", vram = 0x80134314, size = 0xF0 },
+    { name = "ovl02_func_80134404", vram = 0x80134404, size = 0x11C },
+]
+
+[[section]]
+name = "ovl03"
+rom = 0x1426B0
+vram = 0x80134270
+size = 0x440
+
+functions = [
+    { name = "ovl03_func_80134270", vram = 0x80134270, size = 0x2C },
+    { name = "ovl03_func_8013429C", vram = 0x8013429C, size = 0x38 },
+    { name = "ovl03_func_801342D4", vram = 0x801342D4, size = 0x5C },
+    { name = "ovl03_func_80134330", vram = 0x80134330, size = 0xD8 },
+    { name = "ovl03_func_80134408", vram = 0x80134408, size = 0x4C },
+    { name = "ovl03_func_80134454", vram = 0x80134454, size = 0xFC },
+    { name = "ovl03_func_80134550", vram = 0x80134550, size = 0x40 },
+    { name = "ovl03_func_80134590", vram = 0x80134590, size = 0x120 },
+]
+
+[[section]]
+name = "ovl04"
+rom = 0x182B40
+vram = 0x80134270
+size = 0x1C0
+
+functions = [
+    { name = "ovl04_func_80134270", vram = 0x80134270, size = 0x78 },
+    { name = "ovl04_func_801342E8", vram = 0x801342E8, size = 0x20 },
+    { name = "ovl04_func_80134308", vram = 0x80134308, size = 0x128 },
+]
+
+[[section]]
+name = "ovl05"
+rom = 0x19C470
+vram = 0x80134270
+size = 0x510
+
+functions = [
+    { name = "ovl05_func_80134270", vram = 0x80134270, size = 0x78 },
+    { name = "ovl05_func_801342E8", vram = 0x801342E8, size = 0x214 },
+    { name = "ovl05_func_801344FC", vram = 0x801344FC, size = 0x15C },
+    { name = "ovl05_func_80134658", vram = 0x80134658, size = 0x128 },
+]
+
+[[section]]
+name = "ovl06"
+rom = 0x1C5E50
+vram = 0x80134270
+size = 0x8D0
+
+functions = [
+    { name = "ovl06_func_80134270", vram = 0x80134270, size = 0x258 },
+    { name = "ovl06_func_801344C8", vram = 0x801344C8, size = 0x80 },
+    { name = "ovl06_func_80134548", vram = 0x80134548, size = 0x8C },
+    { name = "ovl06_func_801345D4", vram = 0x801345D4, size = 0xB4 },
+    { name = "ovl06_func_80134688", vram = 0x80134688, size = 0x8 },
+    { name = "ovl06_func_80134690", vram = 0x80134690, size = 0x7C },
+    { name = "ovl06_func_8013470C", vram = 0x8013470C, size = 0x308 },
+    { name = "ovl06_func_80134A14", vram = 0x80134A14, size = 0x12C },
+]
+
+[[section]]
+name = "ovl07"
+rom = 0x1FE3D0
+vram = 0x80134270
+size = 0xA20
+
+functions = [
+    { name = "ovl07_func_80134270", vram = 0x80134270, size = 0x258 },
+    { name = "ovl07_func_801344C8", vram = 0x801344C8, size = 0x80 },
+    { name = "ovl07_func_80134548", vram = 0x80134548, size = 0x8C },
+    { name = "ovl07_func_801345D4", vram = 0x801345D4, size = 0x8 },
+    { name = "ovl07_func_801345DC", vram = 0x801345DC, size = 0x7C },
+    { name = "ovl07_func_80134658", vram = 0x80134658, size = 0x434 },
+    { name = "ovl07_func_80134A8C", vram = 0x80134A8C, size = 0x9C },
+    { name = "ovl07_func_80134B28", vram = 0x80134B28, size = 0x40 },
+    { name = "ovl07_func_80134B68", vram = 0x80134B68, size = 0x128 },
+]
+
+[[section]]
+name = "ovl08"
+rom = 0x2535D0
+vram = 0x80134270
+size = 0x900
+
+functions = [
+    { name = "ovl08_func_80134270", vram = 0x80134270, size = 0x258 },
+    { name = "ovl08_func_801344C8", vram = 0x801344C8, size = 0x80 },
+    { name = "ovl08_func_80134548", vram = 0x80134548, size = 0x8C },
+    { name = "ovl08_func_801345D4", vram = 0x801345D4, size = 0x40 },
+    { name = "ovl08_func_80134614", vram = 0x80134614, size = 0x8C },
+    { name = "ovl08_func_801346A0", vram = 0x801346A0, size = 0x3A4 },
+    { name = "ovl08_func_80134A44", vram = 0x80134A44, size = 0x12C },
+]
+
+[[section]]
+name = "ovl09"
+rom = 0x29CA40
+vram = 0x80134270
+size = 0x5B0
+
+functions = [
+    { name = "ovl09_func_80134270", vram = 0x80134270, size = 0x40 },
+    { name = "ovl09_func_801342B0", vram = 0x801342B0, size = 0x8 },
+    { name = "ovl09_func_801342B8", vram = 0x801342B8, size = 0x8 },
+    { name = "ovl09_func_801342C0", vram = 0x801342C0, size = 0xB8 },
+    { name = "ovl09_func_80134378", vram = 0x80134378, size = 0xE4 },
+    { name = "ovl09_func_8013445C", vram = 0x8013445C, size = 0x78 },
+    { name = "ovl09_func_801344D4", vram = 0x801344D4, size = 0x64 },
+    { name = "ovl09_func_80134538", vram = 0x80134538, size = 0x60 },
+    { name = "ovl09_func_80134598", vram = 0x80134598, size = 0xF4 },
+    { name = "ovl09_func_8013468C", vram = 0x8013468C, size = 0x6C },
+    { name = "ovl09_func_801346F8", vram = 0x801346F8, size = 0x128 },
+]
+
+[[section]]
+name = "ovl10"
+rom = 0x2BD950
+vram = 0x80134270
+size = 0x760
+
+functions = [
+    { name = "ovl10_func_80134270", vram = 0x80134270, size = 0x40 },
+    { name = "ovl10_func_801342B0", vram = 0x801342B0, size = 0x150 },
+    { name = "ovl10_func_80134400", vram = 0x80134400, size = 0xF4 },
+    { name = "ovl10_func_801344F4", vram = 0x801344F4, size = 0xE4 },
+    { name = "ovl10_func_801345D8", vram = 0x801345D8, size = 0x78 },
+    { name = "ovl10_func_80134650", vram = 0x80134650, size = 0x64 },
+    { name = "ovl10_func_801346B4", vram = 0x801346B4, size = 0x60 },
+    { name = "ovl10_func_80134714", vram = 0x80134714, size = 0xF4 },
+    { name = "ovl10_func_80134808", vram = 0x80134808, size = 0x8 },
+    { name = "ovl10_func_80134810", vram = 0x80134810, size = 0xA0 },
+    { name = "ovl10_func_801348B0", vram = 0x801348B0, size = 0x120 },
+]
+
+[[section]]
+name = "ovl11"
+rom = 0x2DA640
+vram = 0x80134270
+size = 0x300
+
+functions = [
+    { name = "ovl11_func_80134270", vram = 0x80134270, size = 0x1E8 },
+    { name = "ovl11_func_80134458", vram = 0x80134458, size = 0x118 },
+]
+
+[[section]]
+name = "ovl12"
+rom = 0x31AA90
+vram = 0x80134270
+size = 0x7B0
+
+functions = [
+    { name = "ovl12_func_80134270", vram = 0x80134270, size = 0x5C },
+    { name = "ovl12_func_801342CC", vram = 0x801342CC, size = 0x40 },
+    { name = "ovl12_func_8013430C", vram = 0x8013430C, size = 0x74 },
+    { name = "ovl12_func_80134380", vram = 0x80134380, size = 0x78 },
+    { name = "ovl12_func_801343F8", vram = 0x801343F8, size = 0x78 },
+    { name = "ovl12_func_80134470", vram = 0x80134470, size = 0x164 },
+    { name = "ovl12_func_801345D4", vram = 0x801345D4, size = 0x328 },
+    { name = "ovl12_func_801348FC", vram = 0x801348FC, size = 0x124 },
+]
+
+[[section]]
+name = "ovl13"
+rom = 0x3728F0
+vram = 0x80134270
+size = 0x530
+
+functions = [
+    { name = "ovl13_func_80134270", vram = 0x80134270, size = 0x8 },
+    { name = "ovl13_func_80134278", vram = 0x80134278, size = 0x4C },
+    { name = "ovl13_func_801342C4", vram = 0x801342C4, size = 0xAC },
+    { name = "ovl13_func_80134370", vram = 0x80134370, size = 0x60 },
+    { name = "ovl13_func_801343D0", vram = 0x801343D0, size = 0x68 },
+    { name = "ovl13_func_80134438", vram = 0x80134438, size = 0xB0 },
+    { name = "ovl13_func_801344E8", vram = 0x801344E8, size = 0x60 },
+    { name = "ovl13_func_80134548", vram = 0x80134548, size = 0x128 },
+    { name = "ovl13_func_80134670", vram = 0x80134670, size = 0x8 },
+    { name = "ovl13_func_80134678", vram = 0x80134678, size = 0x128 },
+]
+
+[[section]]
+name = "ovl14"
+rom = 0x3C8950
+vram = 0x80134270
+size = 0x610
+
+functions = [
+    { name = "ovl14_func_80134270", vram = 0x80134270, size = 0x8 },
+    { name = "ovl14_func_80134278", vram = 0x80134278, size = 0x58 },
+    { name = "ovl14_func_801342D0", vram = 0x801342D0, size = 0x60 },
+    { name = "ovl14_func_80134330", vram = 0x80134330, size = 0x6C },
+    { name = "ovl14_func_8013439C", vram = 0x8013439C, size = 0x68 },
+    { name = "ovl14_func_80134404", vram = 0x80134404, size = 0x6C },
+    { name = "ovl14_func_80134470", vram = 0x80134470, size = 0x6C },
+    { name = "ovl14_func_801344DC", vram = 0x801344DC, size = 0x5C },
+    { name = "ovl14_func_80134538", vram = 0x80134538, size = 0x68 },
+    { name = "ovl14_func_801345A0", vram = 0x801345A0, size = 0x60 },
+    { name = "ovl14_func_80134600", vram = 0x80134600, size = 0x64 },
+    { name = "ovl14_func_80134664", vram = 0x80134664, size = 0x60 },
+    { name = "ovl14_func_801346C4", vram = 0x801346C4, size = 0x98 },
+    { name = "ovl14_func_8013475C", vram = 0x8013475C, size = 0x124 },
+]
+
+[[section]]
+name = "ovl15"
+rom = 0x3E3D00
+vram = 0x80134270
+size = 0x2F0
+
+functions = [
+    { name = "ovl15_func_80134270", vram = 0x80134270, size = 0x1C4 },
+    { name = "ovl15_func_80134434", vram = 0x80134434, size = 0x8 },
+    { name = "ovl15_func_8013443C", vram = 0x8013443C, size = 0x124 },
+]
+
+[[section]]
+name = "ovl16"
+rom = 0x44E2E0
+vram = 0x80134270
+size = 0x180
+
+functions = [
+    { name = "ovl16_func_80134270", vram = 0x80134270, size = 0x5C },
+    { name = "ovl16_func_801342CC", vram = 0x801342CC, size = 0x8 },
+    { name = "ovl16_func_801342D4", vram = 0x801342D4, size = 0x11C },
+]
+
+[[section]]
+name = "ovl17"
+rom = 0x3F6EF0
+vram = 0x80134270
+size = 0x640
+
+functions = [
+    { name = "ovl17_func_80134270", vram = 0x80134270, size = 0x19C },
+    { name = "ovl17_func_8013440C", vram = 0x8013440C, size = 0x5C },
+    { name = "ovl17_func_80134468", vram = 0x80134468, size = 0x84 },
+    { name = "ovl17_func_801344EC", vram = 0x801344EC, size = 0x5C },
+    { name = "ovl17_func_80134548", vram = 0x80134548, size = 0x5C },
+    { name = "ovl17_func_801345A4", vram = 0x801345A4, size = 0x5C },
+    { name = "ovl17_func_80134600", vram = 0x80134600, size = 0x5C },
+    { name = "ovl17_func_8013465C", vram = 0x8013465C, size = 0x5C },
+    { name = "ovl17_func_801346B8", vram = 0x801346B8, size = 0xD0 },
+    { name = "ovl17_func_80134788", vram = 0x80134788, size = 0x8 },
+    { name = "ovl17_func_80134790", vram = 0x80134790, size = 0x120 },
+]
+
+[[section]]
+name = "ovl18"
+rom = 0x417E50
+vram = 0x80134270
+size = 0x650
+
+functions = [
+    { name = "ovl18_func_80134270", vram = 0x80134270, size = 0x200 },
+    { name = "ovl18_func_80134470", vram = 0x80134470, size = 0x5C },
+    { name = "ovl18_func_801344CC", vram = 0x801344CC, size = 0x84 },
+    { name = "ovl18_func_80134550", vram = 0x80134550, size = 0x5C },
+    { name = "ovl18_func_801345AC", vram = 0x801345AC, size = 0x5C },
+    { name = "ovl18_func_80134608", vram = 0x80134608, size = 0x5C },
+    { name = "ovl18_func_80134664", vram = 0x80134664, size = 0x5C },
+    { name = "ovl18_func_801346C0", vram = 0x801346C0, size = 0xD8 },
+    { name = "ovl18_func_80134798", vram = 0x80134798, size = 0x8 },
+    { name = "ovl18_func_801347A0", vram = 0x801347A0, size = 0x120 },
+]
+
+[[section]]
+name = "ovl19"
+rom = 0x430E20
+vram = 0x80134270
+size = 0x640
+
+functions = [
+    { name = "ovl19_func_80134270", vram = 0x80134270, size = 0x19C },
+    { name = "ovl19_func_8013440C", vram = 0x8013440C, size = 0x5C },
+    { name = "ovl19_func_80134468", vram = 0x80134468, size = 0x84 },
+    { name = "ovl19_func_801344EC", vram = 0x801344EC, size = 0x5C },
+    { name = "ovl19_func_80134548", vram = 0x80134548, size = 0x5C },
+    { name = "ovl19_func_801345A4", vram = 0x801345A4, size = 0x5C },
+    { name = "ovl19_func_80134600", vram = 0x80134600, size = 0x5C },
+    { name = "ovl19_func_8013465C", vram = 0x8013465C, size = 0x58 },
+    { name = "ovl19_func_801346B4", vram = 0x801346B4, size = 0xD0 },
+    { name = "ovl19_func_80134784", vram = 0x80134784, size = 0x8 },
+    { name = "ovl19_func_8013478C", vram = 0x8013478C, size = 0x124 },
+]
+
+[[section]]
+name = "ovl20"
+rom = 0x456EF0
+vram = 0x80134270
+size = 0x130
+
+functions = [
+    { name = "ovl20_func_80134270", vram = 0x80134270, size = 0x8 },
+    { name = "ovl20_func_80134278", vram = 0x80134278, size = 0x8 },
+    { name = "ovl20_func_80134280", vram = 0x80134280, size = 0x120 },
+]
+
+[[section]]
+name = "ovl21"
+rom = 0x47EBD0
+vram = 0x80134270
+size = 0x1F0
+
+functions = [
+    { name = "ovl21_func_80134270", vram = 0x80134270, size = 0x58 },
+    { name = "ovl21_func_801342C8", vram = 0x801342C8, size = 0x6C },
+    { name = "ovl21_func_80134334", vram = 0x80134334, size = 0x12C },
+]
+
+[[section]]
+name = "ovl22"
+rom = 0x4A49D0
+vram = 0x80134270
+size = 0x5F0
+
+functions = [
+    { name = "ovl22_func_80134270", vram = 0x80134270, size = 0x8 },
+    { name = "ovl22_func_80134278", vram = 0x80134278, size = 0x8 },
+    { name = "ovl22_func_80134280", vram = 0x80134280, size = 0x58 },
+    { name = "ovl22_func_801342D8", vram = 0x801342D8, size = 0x60 },
+    { name = "ovl22_func_80134338", vram = 0x80134338, size = 0x60 },
+    { name = "ovl22_func_80134398", vram = 0x80134398, size = 0xB0 },
+    { name = "ovl22_func_80134448", vram = 0x80134448, size = 0x138 },
+    { name = "ovl22_func_80134580", vram = 0x80134580, size = 0x5C },
+    { name = "ovl22_func_801345DC", vram = 0x801345DC, size = 0x68 },
+    { name = "ovl22_func_80134644", vram = 0x80134644, size = 0x68 },
+    { name = "ovl22_func_801346AC", vram = 0x801346AC, size = 0x88 },
+    { name = "ovl22_func_80134734", vram = 0x80134734, size = 0x8 },
+    { name = "ovl22_func_8013473C", vram = 0x8013473C, size = 0x124 },
+]
+

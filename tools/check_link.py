@@ -8,13 +8,13 @@ import re
 
 emitted, called = set(), set()
 for f in glob.glob('RecompiledFuncs/funcs_*.c'):
-    s = open(f).read()
+    s = open(f, encoding='utf-8', errors='replace').read()
     emitted |= set(re.findall(r'^RECOMP_FUNC void (\w+)\(', s, re.M))
     called |= set(re.findall(r'\b(\w+)\(rdram, ctx\);', s))
 
 provided = set()
 for f in glob.glob('lib/N64ModernRuntime/**/*.c*', recursive=True) + glob.glob('src/**/*.c*', recursive=True):
-    provided |= set(re.findall(r'\b(\w+_recomp)\s*\(\s*(?:RDRAM_ARG|uint8_t\s*\*\s*rdram)', open(f, errors='ignore').read()))
+    provided |= set(re.findall(r'\b(\w+)\s*\(\s*(?:RDRAM_ARG|uint8_t\s*\*\s*rdram)', open(f, encoding='utf-8', errors='ignore').read()))
 
 missing = sorted(c for c in called - emitted - provided - {'LOOKUP_FUNC'})
 print(f'{len(emitted)} emitted, {len(called)} call targets, {len(missing)} unresolved')

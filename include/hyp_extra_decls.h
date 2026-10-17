@@ -24,6 +24,14 @@ void osGetIntMask_recomp(uint8_t* rdram, recomp_context* ctx);
 void osDpGetCounters_recomp(uint8_t* rdram, recomp_context* ctx);
 void __osVoiceSetADConverter_recomp(uint8_t* rdram, recomp_context* ctx);
 
+// src/overlay_hooks.cpp (hook target)
+void hyp_on_overlay_load(uint8_t* rdram, recomp_context* ctx);
+
+// src/debug_trace.cpp (hook targets)
+void hyp_trace_dma(uint8_t* rdram, recomp_context* ctx);
+void hyp_trace_decompress(uint8_t* rdram, recomp_context* ctx);
+void hyp_trace_stage_load(uint8_t* rdram, recomp_context* ctx);
+
 #ifdef __cplusplus
 }
 #endif

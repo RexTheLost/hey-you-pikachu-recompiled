@@ -4,12 +4,19 @@ ROM: `D:\AI\Hey You, Pikachu! (USA).z64`
 - 16 MiB, big-endian .z64, SHA-1 `da1a1e47a86720f9d54fb2d2d247480041bda824`
 - Game ID `NPGE`, CIC-6102, entry `0x80000400`, libultra rev 2.0K
 - Data ends at ROM `0xF194A0` (rest is padding)
-- No standard compression (no Yay0/Yaz0/MIO0 magic found)
+- No standard compression (no Yay0/Yaz0/MIO0 magic found). Stage data blocks are **LH5 (LHA -lh5-)** compressed:
+  - decoder: `func_80049F74`
+  - loader: `func_8002D010`, which decompresses and then applies `{offset, value}` fixups
+  - archive reader: `func_80049E44`
+
+## Status (2026-10-17)
+- **Boots and renders on PC.** It reaches the game's own "microphone/VRU not connected, press START" screen (`docs/first_boot.png`), and runs stably at about 60 VI/s with 2 display lists per VI.
+- Next: emulate the VRU (osVoice*). Then test past the START prompt.
 
 ## Microcode
-- `F3DAM fifo 2.05` (Yasumoto) at ROM `0xA9126` — an F3DEX2 variant
-- `L3DEX fifo 2.08` at ROM `0xA9556`
-- Takeaway: F3DEX2-family, which RT64 handles
+- `F3DAM fifo 2.05` (Yasumoto) at ROM `0xA9126`. RT64 already knew it as `F3DAM2.fifo 2.05` but mapped it to `Unknown`. Our patch maps it to **F3DEX2**: its display lists are standard F3DEX2.
+- `L3DEX fifo 2.08` at ROM `0xA9556`. RT64 already supports it as `L3DEX2.fifo 2.08`.
+- RT64 identifies a microcode by hashing **RDRAM in the recompiler's layout (32-bit words byte-swapped)**, not big-endian ROM bytes. Hash the swapped bytes when checking a microcode against RT64's database.
 
 ## Memory map
 | Segment | ROM | VRAM | Loaded by |
@@ -22,7 +29,12 @@ ROM: `D:\AI\Hey You, Pikachu! (USA).z64`
 | game overlay .bss | — | `0x80133DE0–0x80134270` | same |
 | assets | `0xDCF60–0xF194A0` | — | various DMA (e.g. `func_80000518` loads `0x4B4990–0x505090`) |
 
-- `func_800135C0` is the **only** overlay load site, and it loads exactly one overlay. So recompilation only needs: main + one fixed overlay (+ VRU data blob).
+| 23 scene overlays | table at ROM `0xCC724` (in game overlay data) | all at `0x80134270`; text 0x130–0xA20 bytes, then large data | `overlayLoad` (`func_800135C0`) |
+
+- `func_800135C0` (`overlayLoad(rom_start, rom_end, text, text, data, data, bss, bss, end)`) loads the game overlay **and** the 23 scene overlays. The scene overlays overlap at `0x80134270`.
+  - `tools/sections.py` reads their table straight from the ROM.
+  - Each overlay is a separate recomp section, with function names prefixed `ovlNN_`.
+- (The earlier claim that there's just one overlay was wrong: the scene overlays have tiny text sections, which prologue scans missed.)
 - DMA helper: `func_80037B1C(rom, vram, size)`.
 - Asset offset tables in main data: ROM `0x77C58` (227 entries) and `0x7838C` (226 entries).
 - 236 `jalr` sites in main (function pointers). These need to be covered in the recomp function list.
@@ -132,6 +144,50 @@ Stability findings:
   - N64Recomp `ffb39cd`
   - N64ModernRuntime `cdf5abb`
   - n64sym `master`, patched locally: `#ifdef WIN32` → `#if defined(WIN32) || defined(_WIN32)` so it builds with MinGW
+
+## Runtime app (in progress)
+- Pins, matching Zelda64Recomp's known-good pair:
+  - `lib/N64ModernRuntime` @ `df7e820`; its embedded N64Recomp is `c1a6dc9`, and `build/n64recomp/N64Recomp.exe` is built from that pin
+  - `lib/rt64` @ `23cab60`
+- Our RT64 patches live in `patches/rt64/` and are applied with `tools/apply_patches.sh`:
+  - `0001-hyp-microcode-database.patch` is one line: RT64's existing `F3DAM2_FIFO_2_05` entry, `Unknown` → `F3DEX2`.
+  - Without it, RT64 walked display lists as raw RDP and crashed in `loadTLUTOperation`.
+  - Microcode table in ROM: `0x8009D41C` `{text, data, ?, size}`:
+    - F3DAM: text `0x80060D80`, data `0x800A83E0`
+    - L3DEX: text `0x80062120`, data `0x800A8810`
+- Audio microcode: `rsp/n_aspMain.us.toml` → `rsp/n_aspMain.cpp` (RSPRecomp at the runtime pin).
+  - Text: vram `0x80060120` (ROM `0x60D20`), size `0xC60`. Data: `0x800A8130`.
+  - **`text_address = 0x04001080`**: rspboot loads ucode text at IMEM `0x1080`. With `0x1000`, every `j`/`jal` was off by 0x80 and the audio task looped forever, so the game never drew a frame.
+  - Indirect targets are the 16-entry command table at the start of data. Entry 14 (`0x02B0`) is a DMEM buffer address, not code.
+  - Audio init is at `0x8001F948`. It passes `0x8004DBD8` (an audio callback) as a pointer.
+- Runtime integration gotchas (all fixed):
+  - librecomp registers overlays only for the initial boot DMA. The hook `overlayLoad` → `hyp_on_overlay_load` (`src/overlay_hooks.cpp`) calls `unload_overlays` + `load_overlays` for every overlay the game loads.
+  - Calling `recomp::start_game` before `recomp::start` skips the VI thread's dummy-mode setup, which led to a null VI mode crash in `vi_thread_func`. The game is now started from `gfx_init_callback` + 100 ms.
+- Debug switches (environment variables):
+  - `HYP_TRACE=1`: `[dma]`/`[lzh]`/`[stage]`/`[ovl]`/`[aud]`/`[gfx]` logs
+  - `HYP_DUMP_STACKS_AFTER=<s>`: symbolized stacks of all threads, with source lines
+  - `HYP_DL_DUMP=<file>`: display lists of the first 30 tasks
+  - `HYP_ON_TOP=1`: always-on-top window, for captures
+  - A crash handler prints a symbolized stack with source lines.
+  - `tools/capture_window.ps1` captures only the game window.
+- App sources:
+  - `src/main/main.cpp` uses no launcher UI. On first run it validates and stores the ROM with `--rom <path>` (or `baserom.us.z64` next to the exe), then `start_game` → `recomp::start`.
+  - Data (stored ROM, saves) goes in `<exe>/data`.
+  - Save type is `Eep4k`: the game only accepts `osEepromProbe() == 1`.
+  - ROM XXH3 is `0x9D29140FAB450973`.
+- Other app files:
+  - `src/main/rt64_render_context.cpp`: adapted from Zelda64Recomp (GPL-3.0), without texture packs or UI hooks
+  - `src/game/input.cpp`: SDL keyboard/controller → N64 port 1
+- Licensing: code adapted from Zelda64Recomp is **GPL-3.0**, so distributed builds of this port must be GPL-3.0.
+- Build: `tools\build.bat [RelWithDebInfo]` → `build\win\HeyYouPikachuRecompiled.exe`. Needs:
+  - VS 2022 Build Tools with clang-cl
+  - Windows SDK 10.0.22621 (installed 2026-10-17; C: was full, see memory)
+- Overlay registration caveat: librecomp's initial 1 MB boot DMA also "loads" sections at ROM-relative addresses. That's harmless:
+  - The real DMA (`0xB3C70 → 0x8010AAF0`) registers the correct addresses.
+  - Direct calls are plain C calls.
+- REA: its Ghidra lane is PE-only on Windows, so REA can't analyze this MIPS code here. We run Ghidra 12.1.4 headless directly:
+  - `tools/make_elf.py` builds the ELF, and `tools/ghidra/DumpFunctions.java` + `tools/compare_funcs.py` compare function lists.
+  - This check found the missing `0x8004DBD8` function, a pointer-only audio callback that would have crashed at audio init.
 
 ## Port plan
 1. **Runtime app (next):** N64ModernRuntime (librecomp + ultramodern) + RT64, modeled on Zelda64Recomp. Compile `RecompiledFuncs` + `src/` into an exe.
