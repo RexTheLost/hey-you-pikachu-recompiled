@@ -24,9 +24,15 @@ ROM: `D:\AI\Hey You, Pikachu! (USA).z64`
   - GUI exe with no console window (set `HYP_CONSOLE=1` for one).
   - ROM picker on first run.
   - Zip of exe + SDL2 + DXC DLLs + README. The zip contains no ROM; the stored ROM copy lands in `data\` only when the game runs.
-- Saves:
-  - EEPROM 4K probe and reads work (the file menu shows its slots).
-  - Writes are **not yet confirmed in real play**. The game saves at day boundaries; the file should appear as `data\saves\<id>.bin`.
+- **Saves confirmed** (2026-10-17): the game's own save routine was triggered mid-game. Round trip:
+  1. `func_80032D44(file)`, where `file` is the 1-based current file from `D_800AE510`, writes a 0x74-byte EEPROM block via the service thread.
+  2. The runtime writes `data\saves\hyp.n64.us.1.0.bin` (512 B, plus `.bak`).
+  3. On relaunch the title menu offers Continue with the file's portrait.
+  4. Continue reads block 1 and resumes at the start of the saved day.
+  - Save API: `func_800045C0` (write request, type-5 message to the service thread `func_80002650`) and `func_8000451C` (read).
+  - Block 0 holds a 1-byte header; files are at blocks 1+.
+  - Test aid: `HYP_FORCE_SAVE_AT=<s>` (hooked into the game-logic frame loop at `0x8000BC34`; never from the service thread, which would self-deadlock).
+- License: GPL-3.0 (`COPYING`), included in the release zip.
 - Next:
   - microphone recognizer (Vosk/whisper.cpp, constrained to the current dictionary)
   - VRU word picker polish
@@ -189,6 +195,8 @@ Stability findings:
   - `HYP_PRESS="start@10,a@14"`: scripted button taps
   - `HYP_VRU_SAY="Pikachu@60,hello@75"`: scripted speech
   - `HYP_PICKER=1`: open the word picker at launch
+  - `HYP_FORCE_SAVE_AT=<s>`: trigger the game's save routine (test)
+  - `HYP_PRESS` also supports `sup/sdown/sleft/sright` (analog stick)
   - A crash handler prints a symbolized stack with source lines.
   - `tools/capture_window.ps1` captures only the game window.
 - App sources:

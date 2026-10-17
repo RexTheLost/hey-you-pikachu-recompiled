@@ -110,13 +110,16 @@ bool hyp::input::get_n64_input(int controller_num, uint16_t* buttons, float* x, 
 
     // Test aid: HYP_PRESS="start@8,a@12,z@20" taps buttons (0.25 s) at fixed times.
     {
-        static std::vector<std::pair<double, uint16_t>> presses = [] {
-            std::vector<std::pair<double, uint16_t>> p;
+        constexpr uint32_t STICK_UP = 0x10000, STICK_DOWN = 0x20000, STICK_LEFT = 0x40000, STICK_RIGHT = 0x80000;
+        static std::vector<std::pair<double, uint32_t>> presses = [] {
+            std::vector<std::pair<double, uint32_t>> p;
             const char* env = std::getenv("HYP_PRESS");
             if (env == nullptr) return p;
-            struct { const char* name; uint16_t bit; } names[] = {
+            struct { const char* name; uint32_t bit; } names[] = {
                 { "a", N64_A }, { "b", N64_B }, { "z", N64_Z }, { "start", N64_START }, { "l", N64_L }, { "r", N64_R },
                 { "up", N64_DU }, { "down", N64_DD }, { "left", N64_DL }, { "right", N64_DR },
+                // analog stick directions (above the 16 button bits)
+                { "sup", STICK_UP }, { "sdown", STICK_DOWN }, { "sleft", STICK_LEFT }, { "sright", STICK_RIGHT },
             };
             std::string spec = env;
             size_t pos = 0;
@@ -135,7 +138,15 @@ bool hyp::input::get_n64_input(int controller_num, uint16_t* buttons, float* x, 
         static const auto start = std::chrono::steady_clock::now();
         double t = std::chrono::duration<double>(std::chrono::steady_clock::now() - start).count();
         for (const auto& [when, bit] : presses) {
-            if (t >= when && t < when + 0.25) b |= bit;
+            if (t >= when && t < when + 0.25) {
+                switch (bit) {
+                    case STICK_UP: sy = 1.0f; break;
+                    case STICK_DOWN: sy = -1.0f; break;
+                    case STICK_LEFT: sx = -1.0f; break;
+                    case STICK_RIGHT: sx = 1.0f; break;
+                    default: b |= (uint16_t)bit; break;
+                }
+            }
         }
     }
 

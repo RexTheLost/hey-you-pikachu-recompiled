@@ -35,3 +35,17 @@ text = "hyp_trace_stage_load(rdram, ctx);"
 func = "overlayLoad"
 before_vram = 0x800135C0
 text = "hyp_on_overlay_load(rdram, ctx);"
+
+# Trace save-thread requests (op 0 = read, 1 = write): {?, op, done, result, block, ?, data, size}
+[[patches.hook]]
+func = "func_80003938"
+before_vram = 0x80003938
+text = "hyp_trace_save_request(rdram, ctx);"
+
+# Test aid (HYP_FORCE_SAVE_AT): per-frame check on the main game-logic thread (30),
+# which is where the game issues its own saves. (Not vruPoll: that runs on the
+# service thread that executes save requests, so saving from it would self-deadlock.)
+[[patches.hook]]
+func = "func_8000BB8C"
+before_vram = 0x8000BC34
+text = "hyp_force_save_check(rdram, ctx);"

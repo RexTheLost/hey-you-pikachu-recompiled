@@ -16,6 +16,7 @@ foreach ($f in 'HeyYouPikachuRecompiled.exe', 'SDL2.dll', 'dxil.dll', 'dxcompile
     Copy-Item (Join-Path $bin $f) $dist
 }
 Copy-Item (Join-Path $root 'README.md') $dist
+Copy-Item (Join-Path $root 'COPYING') $dist
 
 $zip = Join-Path $root 'build\dist\HeyYouPikachuRecompiled-win64.zip'
 if (Test-Path $zip) { Remove-Item $zip -Force }

@@ -53,4 +53,6 @@ What these do:
 Reverse-engineering notes, the memory map, the VRU interface and all porting gotchas are in [NOTES.md](NOTES.md).
 
 ## Licensing
-Parts of `src/main` are adapted from Zelda64Recomp (GPL-3.0), so distributed builds must comply with GPL-3.0. Recompiled game code and game assets are not part of this repository.
+This project is licensed under the **GNU General Public License v3.0**; see [COPYING](COPYING). Parts of `src/main` are adapted from Zelda64Recomp (also GPL-3.0).
+
+The licence covers this repository's own code. It does not cover *Hey You, Pikachu!*, which remains the property of its rights holders. Recompiled game code, the ROM and game assets are not part of this repository or its release packages.

@@ -11,8 +11,10 @@ public static class Win {
   [DllImport("user32.dll")] public static extern bool ClientToScreen(IntPtr h, ref POINT p);
   [DllImport("user32.dll")] public static extern bool SetForegroundWindow(IntPtr h);
   [DllImport("user32.dll")] public static extern bool ShowWindow(IntPtr h, int cmd);
+  [DllImport("user32.dll")] public static extern bool SetProcessDPIAware();
 }
 "@
+[Win]::SetProcessDPIAware() | Out-Null   # physical pixels, so the whole client area is captured
 Add-Type -Name FW -Namespace U -MemberDefinition '[DllImport("user32.dll", CharSet=CharSet.Unicode)] public static extern IntPtr FindWindow(string c, string t);'
 $p = Get-Process $ProcessName -ErrorAction Stop | Where-Object { $_.MainWindowHandle -ne 0 } | Select-Object -First 1
 if ($WindowClass) {   # capture another top-level window of the app by its window class
