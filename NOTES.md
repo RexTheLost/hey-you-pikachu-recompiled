@@ -205,6 +205,7 @@ Stability findings:
   - `HYP_VRU_SAY="Pikachu@60,hello@75"`: scripted speech
   - `HYP_PICKER=1`: open the word picker at launch
   - `HYP_FORCE_SAVE_AT=<s>`: trigger the game's save routine (test)
+  - `HYP_CONTROL=<file>`: live test control; the game runs lines appended to the file: `press <button> [secs]`, `stick <x> <y> <secs>`, `say <word>`, `save`, `shot <png>`, `quit` (src/debug_control.cpp)
   - `HYP_PRESS` also supports `sup/sdown/sleft/sright` (analog stick)
   - A crash handler prints a symbolized stack with source lines.
   - `tools/capture_window.ps1` captures only the game window.
@@ -251,3 +252,12 @@ Stability findings:
 ## Tooling
 - venv with rabbitizer, spimdisasm, splat64, m2c (in the session scratchpad; recreate as needed)
 - `tools/dump_vru_dict.py <rom> <out.json>`
+
+## Window menu (src/main/menu.cpp)
+- Win32 menu bar on the SDL window, handled by subclassing SDL's window procedure (menu messages arrive on the window/update_gfx thread). Device lists are rebuilt on WM_INITMENUPOPUP.
+- SDL2 swallows `SC_KEYMENU`; the subclass passes Alt / Alt+letter / F10 to DefWindowProc so keyboard menu access works (Alt+Enter stays fullscreen).
+- Fullscreen is borderless and done by the menu code (style + `SetMenu(nullptr)`), not RT64's `setFullScreen`: RT64 only hides a menu it captured in `makeResizable`, which is never called here.
+- Graphics options map to `ultramodern::renderer::GraphicsConfig` (res/ar/msaa); `set_graphics_config` queues an update the gfx thread applies.
+- Audio output switching reopens the SDL device under `audio_device_mutex` (queue_samples / get_frames_remaining take it too).
+- Controller choice: `hyp::input::select_controller` ("" = first connected, "-" = keyboard only), guarded by a mutex since input is read on game threads.
+- Settings: `data/settings.json` (src/settings.cpp).

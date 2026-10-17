@@ -11,12 +11,14 @@
 #include <chrono>
 #include <cmath>
 #include <cstdlib>
+#include <mutex>
 #include <string>
 #include <utility>
 #include <vector>
 
 #include "SDL.h"
 
+#include "hyp_control.h"
 #include "hyp_input.h"
 #include "hyp_vru.h"
 
@@ -34,6 +36,25 @@ namespace {
     constexpr float c_button_threshold = 0.5f;
 
     SDL_GameController* controller = nullptr;
+    std::string controller_choice; // "" = first connected, "-" = keyboard only, else a controller name
+    std::recursive_mutex controller_mutex; // the menu switches controllers on the window thread
+
+    // Open the controller matching the player's choice (window thread, under the lock).
+    void open_preferred_controller() {
+        if (controller != nullptr) {
+            SDL_GameControllerClose(controller);
+            controller = nullptr;
+        }
+        if (controller_choice == "-") return;
+        for (int i = 0; i < SDL_NumJoysticks(); i++) {
+            if (!SDL_IsGameController(i)) continue;
+            const char* name = SDL_GameControllerNameForIndex(i);
+            if (controller_choice.empty() || (name != nullptr && controller_choice == name)) {
+                controller = SDL_GameControllerOpen(i);
+                return;
+            }
+        }
+    }
 
     float axis(SDL_GameControllerAxis a) {
         float v = SDL_GameControllerGetAxis(controller, a) / 32767.0f;
@@ -46,14 +67,38 @@ namespace {
 }
 
 void hyp::input::handle_controller_event(const SDL_Event& event) {
+    std::lock_guard lock{ controller_mutex };
     if (event.type == SDL_CONTROLLERDEVICEADDED && controller == nullptr) {
-        controller = SDL_GameControllerOpen(event.cdevice.which);
+        open_preferred_controller();
     }
     else if (event.type == SDL_CONTROLLERDEVICEREMOVED && controller != nullptr &&
              event.cdevice.which == SDL_JoystickInstanceID(SDL_GameControllerGetJoystick(controller))) {
         SDL_GameControllerClose(controller);
         controller = nullptr;
+        open_preferred_controller(); // fall back to another connected controller, if any
     }
+}
+
+std::vector<std::string> hyp::input::controller_names() {
+    std::vector<std::string> names;
+    for (int i = 0; i < SDL_NumJoysticks(); i++) {
+        if (!SDL_IsGameController(i)) continue;
+        const char* name = SDL_GameControllerNameForIndex(i);
+        names.emplace_back(name != nullptr ? name : "Controller");
+    }
+    return names;
+}
+
+void hyp::input::select_controller(const std::string& choice) {
+    std::lock_guard lock{ controller_mutex };
+    controller_choice = choice;
+    open_preferred_controller();
+}
+
+std::string hyp::input::active_controller_name() {
+    std::lock_guard lock{ controller_mutex };
+    const char* name = controller != nullptr ? SDL_GameControllerName(controller) : nullptr;
+    return name != nullptr ? name : "";
 }
 
 void hyp::input::poll_inputs() {
@@ -81,6 +126,7 @@ bool hyp::input::get_n64_input(int controller_num, uint16_t* buttons, float* x, 
     sx += (keys[SDL_SCANCODE_RIGHT] ? 1.0f : 0.0f) - (keys[SDL_SCANCODE_LEFT] ? 1.0f : 0.0f);
     sy += (keys[SDL_SCANCODE_UP] ? 1.0f : 0.0f) - (keys[SDL_SCANCODE_DOWN] ? 1.0f : 0.0f);
 
+    std::unique_lock controller_lock{ controller_mutex };
     if (controller != nullptr) {
         struct { SDL_GameControllerButton btn; uint16_t bit; } pad_map[] = {
             { SDL_CONTROLLER_BUTTON_A, N64_A }, { SDL_CONTROLLER_BUTTON_B, N64_B }, { SDL_CONTROLLER_BUTTON_X, N64_B },
@@ -107,6 +153,8 @@ bool hyp::input::get_n64_input(int controller_num, uint16_t* buttons, float* x, 
             sy = ly;
         }
     }
+
+    controller_lock.unlock();
 
     // Test aid: HYP_PRESS="start@8,a@12,z@20" taps buttons (0.25 s) at fixed times.
     {
@@ -150,6 +198,9 @@ bool hyp::input::get_n64_input(int controller_num, uint16_t* buttons, float* x, 
         }
     }
 
+    // Test aid: live commands from the HYP_CONTROL file.
+    hyp::control::apply_input(&b, &sx, &sy);
+
     // A word was picked/spoken: hold the talk button so the game listens for it.
     if (hyp::vru::talk_button_held()) {
         b |= N64_Z;
@@ -162,6 +213,7 @@ bool hyp::input::get_n64_input(int controller_num, uint16_t* buttons, float* x, 
 }
 
 void hyp::input::set_rumble(int controller_num, bool rumble) {
+    std::lock_guard lock{ controller_mutex };
     if (controller_num == 0 && controller != nullptr) {
         SDL_GameControllerRumble(controller, rumble ? 0xFFFF : 0, rumble ? 0xFFFF : 0, rumble ? 1000 : 0);
     }

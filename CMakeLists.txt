@@ -61,11 +61,14 @@ target_sources(RecompiledFuncs PRIVATE ${FUNC_C_SOURCES} ${FUNC_CXX_SOURCES})
 add_executable(HeyYouPikachuRecompiled)
 target_sources(HeyYouPikachuRecompiled PRIVATE
     ${CMAKE_SOURCE_DIR}/src/main/main.cpp
+    ${CMAKE_SOURCE_DIR}/src/main/menu.cpp
     ${CMAKE_SOURCE_DIR}/src/main/register_overlays.cpp
     ${CMAKE_SOURCE_DIR}/src/main/rt64_render_context.cpp
     ${CMAKE_SOURCE_DIR}/src/game/input.cpp
     ${CMAKE_SOURCE_DIR}/src/runtime_gaps.cpp
     ${CMAKE_SOURCE_DIR}/src/debug_trace.cpp
+    ${CMAKE_SOURCE_DIR}/src/debug_control.cpp
+    ${CMAKE_SOURCE_DIR}/src/settings.cpp
     ${CMAKE_SOURCE_DIR}/src/overlay_hooks.cpp
     ${CMAKE_SOURCE_DIR}/src/vru/vru.cpp
     ${CMAKE_SOURCE_DIR}/src/vru/vru_picker.cpp

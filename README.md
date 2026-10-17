@@ -26,6 +26,15 @@ The Voice Recognition Unit is emulated. You pick what to say from a word list no
 | **Tab** | â€” | open the **word picker** |
 | F11 / Alt+Enter | â€” | fullscreen |
 
+### Menu bar
+The window has a menu bar (click it, or press Alt). Your choices are saved in `data\settings.json`.
+- **Game**: open the save folder, exit.
+- **Graphics**: fullscreen, window size, rendering resolution (Original 320×240, 2×, or Match window for the sharpest picture), aspect ratio (4:3 or an experimental widescreen fill), anti-aliasing.
+- **Audio**: output device (switches immediately), volume, mute.
+- **Input**: which controller to use (or keyboard only), which microphone to use, and the word picker.
+  - The microphone choice is stored for the upcoming speech recognizer; for now, talk with the word picker.
+- **Help**: controls, about.
+
 ### Talking to Pikachu
 Press **Tab** to open the word picker. It lists exactly the words the game understands at that moment, and the list changes as you move between scenes.
 - Type to filter.

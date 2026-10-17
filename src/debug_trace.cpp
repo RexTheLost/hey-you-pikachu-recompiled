@@ -1,5 +1,6 @@
 // Tracing hooks injected into recompiled functions via hyp.recomp.toml
 // [[patches.hook]] entries. Silent unless HYP_TRACE is set in the environment.
+#include "hyp_control.h"
 #include <chrono>
 #include <cstdio>
 #include <cstdlib>
@@ -48,10 +49,12 @@ extern "C" void func_80032D44(uint8_t* rdram, recomp_context* ctx);
 extern "C" void hyp_force_save_check(uint8_t* rdram, recomp_context* ctx) {
     static const char* env = std::getenv("HYP_FORCE_SAVE_AT");
     static bool done = false;
-    if (env == nullptr || done) return;
     static const auto start = std::chrono::steady_clock::now();
-    if (std::chrono::steady_clock::now() - start < std::chrono::duration<double>(std::atof(env))) return;
-    done = true;
+    bool timed = env != nullptr && !done &&
+        std::chrono::steady_clock::now() - start >= std::chrono::duration<double>(std::atof(env));
+    // HYP_CONTROL "save" command
+    if (!timed && !hyp::control::take_save_request()) return;
+    if (timed) done = true;
     recomp_context saved = *ctx;
     // Same argument the game's own save sites pass: the current file number (1 or 2),
     // kept in D_800AE510.

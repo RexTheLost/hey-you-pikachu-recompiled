@@ -7,8 +7,11 @@
 #include <cstdlib>
 #include <cstring>
 #include <array>
+#include <atomic>
 #include <algorithm>
 #include <filesystem>
+#include <mutex>
+#include <string>
 #include <thread>
 #include <chrono>
 #include <stdexcept>
@@ -32,9 +35,13 @@
 #include "librecomp/game.hpp"
 #include "librecomp/rsp.hpp"
 
+#include "hyp_audio.h"
+#include "hyp_control.h"
 #include "hyp_game.h"
 #include "hyp_input.h"
+#include "hyp_menu.h"
 #include "hyp_render.h"
+#include "hyp_settings.h"
 #include "hyp_trace.h"
 #include "hyp_vru.h"
 
@@ -89,6 +96,7 @@ namespace {
         SDL_SysWMinfo wm_info;
         SDL_VERSION(&wm_info.version);
         SDL_GetWindowWMInfo(window, &wm_info);
+        hyp::menu::attach(window);
         return ultramodern::renderer::WindowHandle{ wm_info.info.win.window, GetCurrentThreadId() };
     }
 
@@ -126,6 +134,7 @@ namespace {
 
     void update_gfx(void*) {
         run_scripted_speech();
+        hyp::control::poll();
         static bool picker_opened = false;
         if (!picker_opened && std::getenv("HYP_PICKER") != nullptr) {
             picker_opened = true; // test aid: open the word picker at launch
@@ -147,10 +156,10 @@ namespace {
                     }
                     if (event.key.keysym.scancode == SDL_SCANCODE_F11 ||
                         (event.key.keysym.scancode == SDL_SCANCODE_RETURN && (event.key.keysym.mod & KMOD_ALT))) {
-                        auto config = ultramodern::renderer::get_graphics_config();
-                        config.wm_option = config.wm_option == ultramodern::renderer::WindowMode::Fullscreen
-                            ? ultramodern::renderer::WindowMode::Windowed : ultramodern::renderer::WindowMode::Fullscreen;
-                        ultramodern::renderer::set_graphics_config(config);
+                        hyp::menu::toggle_fullscreen();
+                    }
+                    if (event.key.keysym.scancode == SDL_SCANCODE_F1) {
+                        hyp::menu::show_controls();
                     }
                     break;
             }
@@ -161,6 +170,8 @@ namespace {
 
     SDL_AudioCVT audio_convert;
     SDL_AudioDeviceID audio_device = 0;
+    std::mutex audio_device_mutex; // the menu reopens the device on the window thread
+    std::atomic<float> audio_volume = 1.0f;
     uint32_t sample_rate = 48000;
     uint32_t output_sample_rate = 48000;
     constexpr uint32_t input_channels = 2;
@@ -212,9 +223,10 @@ namespace {
             swap_buffer[i] = duplicated_sample_buffer[i];
         }
         // Swap channels to undo the address xor from endianness handling.
+        const float scale = audio_volume.load() * (0.5f / 32768.0f);
         for (size_t i = 0; i < sample_count; i += input_channels) {
-            swap_buffer[i + 0 + duplicated_input_frames * input_channels] = audio_data[i + 1] * (0.5f / 32768.0f);
-            swap_buffer[i + 1 + duplicated_input_frames * input_channels] = audio_data[i + 0] * (0.5f / 32768.0f);
+            swap_buffer[i + 0 + duplicated_input_frames * input_channels] = audio_data[i + 1] * scale;
+            swap_buffer[i + 1 + duplicated_input_frames * input_channels] = audio_data[i + 0] * scale;
         }
         if (sample_count <= duplicated_input_frames * input_channels) {
             return;
@@ -230,6 +242,7 @@ namespace {
             return;
         }
 
+        std::lock_guard device_lock{ audio_device_mutex };
         // The SDL queue holds converted audio: float frames of output_channels at output_sample_rate.
         uint64_t cur_queued_microseconds = uint64_t(SDL_GetQueuedAudioSize(audio_device)) /
                                            (output_channels * sizeof(float)) * 1000000 / output_sample_rate;
@@ -252,6 +265,7 @@ namespace {
 
     size_t get_frames_remaining() {
         constexpr float buffer_offset_frames = 1.0f;
+        std::lock_guard device_lock{ audio_device_mutex };
         uint64_t buffered_byte_count = SDL_GetQueuedAudioSize(audio_device);
         buffered_byte_count = buffered_byte_count * 2 * sample_rate / output_sample_rate / output_channels;
         uint32_t frames_per_vi = sample_rate / 60;
@@ -277,21 +291,52 @@ namespace {
         update_audio_converter();
     }
 
-    void reset_audio(uint32_t output_freq) {
+    // Open an output device ("" = system default). Keeps the current device on failure.
+    bool open_audio_device(const std::string& name) {
         SDL_AudioSpec spec_desired{};
-        spec_desired.freq = (int)output_freq;
+        spec_desired.freq = (int)output_sample_rate;
         spec_desired.format = AUDIO_F32;
         spec_desired.channels = (Uint8)output_channels;
         spec_desired.samples = 0x100;
-        audio_device = SDL_OpenAudioDevice(nullptr, false, &spec_desired, nullptr, 0);
-        if (audio_device == 0) {
+        SDL_AudioDeviceID device = SDL_OpenAudioDevice(name.empty() ? nullptr : name.c_str(), false, &spec_desired, nullptr, 0);
+        if (device == 0) {
+            std::fprintf(stderr, "Could not open audio device '%s': %s\n", name.c_str(), SDL_GetError());
+            return false;
+        }
+        {
+            std::lock_guard device_lock{ audio_device_mutex };
+            if (audio_device != 0) SDL_CloseAudioDevice(audio_device);
+            audio_device = device;
+        }
+        SDL_PauseAudioDevice(device, 0);
+        return true;
+    }
+
+    void reset_audio(uint32_t output_freq) {
+        output_sample_rate = output_freq;
+        const auto& s = hyp::settings::get();
+        if (!open_audio_device(s.audio_output) && !open_audio_device("")) {
             exit_error(SDL_GetError());
         }
-        SDL_PauseAudioDevice(audio_device, 0);
-        output_sample_rate = output_freq;
         update_audio_converter();
     }
 
+    std::vector<std::string> audio_device_names(int is_capture) {
+        std::vector<std::string> names;
+        int count = SDL_GetNumAudioDevices(is_capture);
+        for (int i = 0; i < count; i++) {
+            if (const char* name = SDL_GetAudioDeviceName(i, is_capture)) names.emplace_back(name);
+        }
+        return names;
+    }
+}
+
+std::vector<std::string> hyp::audio::output_devices() { return audio_device_names(0); }
+std::vector<std::string> hyp::audio::input_devices() { return audio_device_names(1); }
+bool hyp::audio::set_output_device(const std::string& name) { return open_audio_device(name); }
+void hyp::audio::set_volume(float volume) { audio_volume = std::clamp(volume, 0.0f, 1.0f); }
+
+namespace {
     // ---- RSP ----
 
     RspUcodeFunc* get_rsp_microcode(const OSTask* task) {
@@ -449,15 +494,21 @@ int main(int argc, char** argv) {
         }
     }
 
+    // Saves, stored ROM, settings and config live next to the exe (kept off the system drive).
+    std::filesystem::path data_dir = program_dir() / "data";
+    std::filesystem::create_directories(data_dir);
+    hyp::settings::load(data_dir);
+
     SDL_InitSubSystem(SDL_INIT_AUDIO);
     reset_audio(48000);
+    {
+        const auto& s = hyp::settings::get();
+        hyp::audio::set_volume(s.muted ? 0.0f : s.volume / 100.0f);
+    }
     // The game's audio thread makes one 184-sample frame per AI buffer-completion event
     // (~174/s at 32 kHz), not one per video frame: pace AI events by buffer consumption.
     ultramodern::set_ai_buffer_pacing(true, 40);
 
-    // Saves, stored ROM and config live next to the exe (kept off the system drive).
-    std::filesystem::path data_dir = program_dir() / "data";
-    std::filesystem::create_directories(data_dir);
     recomp::register_config_path(data_dir);
 
     recomp::GameEntry game{
