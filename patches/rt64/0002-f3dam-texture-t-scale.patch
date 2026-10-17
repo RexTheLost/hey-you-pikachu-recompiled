@@ -1,17 +1,21 @@
 diff --git a/src/gbi/rt64_gbi_f3dex2.cpp b/src/gbi/rt64_gbi_f3dex2.cpp
-index 9f3a12c..8e7fdf0 100644
+index 9f3a12c..259b20c 100644
 --- a/src/gbi/rt64_gbi_f3dex2.cpp
 +++ b/src/gbi/rt64_gbi_f3dex2.cpp
-@@ -79,7 +79,12 @@ namespace RT64 {
+@@ -79,7 +79,16 @@ namespace RT64 {
                  state->rsp->setSegment((*dl)->p0(2, 4), (*dl)->w1);
                  break;
              case G_MW_FOG:
 -                state->rsp->setFog((int16_t)((*dl)->p1(16, 16)), (int16_t)((*dl)->p1(0, 16)));
-+                // Only offset 0 is the fog factor. F3DAM (Hey You, Pikachu!) also writes another
-+                // parameter at G_MW_FOG + 0x10 every few draws; treating those as fog
-+                // (mul 0, offset 0x7FFF) fogged every 3D model to the fog color.
++                // Only offset 0 is the fog factor. F3DAM (Hey You, Pikachu!) keeps the texture T
++                // scale at G_MW_FOG + 0x10: its gSPTexture emits G_TEXTURE with S only (T = 0)
++                // followed by a moveword writing T there. Treating that write as fog fogged every
++                // model to the fog color, and ignoring it left T = 0 (textures smeared in one axis).
 +                if ((*dl)->p0(0, 16) == 0) {
 +                    state->rsp->setFog((int16_t)((*dl)->p1(16, 16)), (int16_t)((*dl)->p1(0, 16)));
++                }
++                else if ((*dl)->p0(0, 16) == 0x10) {
++                    state->rsp->textureState.tc = (uint16_t)((*dl)->p1(0, 16));
 +                }
                  break;
              case G_MW_LIGHTCOL:
