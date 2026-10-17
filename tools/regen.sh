@@ -1,9 +1,9 @@
 #!/bin/sh
 # Regenerate RecompiledFuncs/ from rom/baserom.us.z64 and verify it.
 # Needs: python with spimdisasm (set PY=... to a venv's python), and a built
-# external/N64Recomp/build/N64Recomp.exe. Run from the repo root.
+# build/n64recomp/N64Recomp.exe. Run from the repo root.
 set -e
-PY=${PY:-python}
+PY=${PY:-.venv/Scripts/python}
 
 # 1. disassemble the two code sections (main .text, game overlay .text)
 rm -rf asm/_main asm/_ovl
@@ -16,12 +16,12 @@ $PY -I tools/gen_syms.py asm/main.s asm/game_ovl.s syms/n64sym.txt syms/manual_n
 
 # 3. recompile
 rm -rf RecompiledFuncs
-external/N64Recomp/build/N64Recomp.exe hyp.recomp.toml > recomp.log 2>&1 || { tail -20 recomp.log; exit 1; }
+build/n64recomp/N64Recomp.exe hyp.recomp.toml > recomp.log 2>&1 || { tail -20 recomp.log; exit 1; }
 
 # 4. every call target must be defined somewhere
 $PY -I tools/check_link.py
 
 # 5. generated C must compile
-ls RecompiledFuncs/*.c | xargs -P 8 -I{} gcc -fsyntax-only -Iexternal/N64Recomp/include -IRecompiledFuncs \
+ls RecompiledFuncs/*.c | xargs -P 8 -I{} gcc -fsyntax-only -Ilib/N64ModernRuntime/N64Recomp/include -IRecompiledFuncs \
     -include include/hyp_extra_decls.h {}
 echo "regen OK"

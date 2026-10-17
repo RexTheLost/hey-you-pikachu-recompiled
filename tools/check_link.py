@@ -13,7 +13,7 @@ for f in glob.glob('RecompiledFuncs/funcs_*.c'):
     called |= set(re.findall(r'\b(\w+)\(rdram, ctx\);', s))
 
 provided = set()
-for f in glob.glob('external/N64ModernRuntime/**/*.c*', recursive=True) + glob.glob('src/**/*.c*', recursive=True):
+for f in glob.glob('lib/N64ModernRuntime/**/*.c*', recursive=True) + glob.glob('src/**/*.c*', recursive=True):
     provided |= set(re.findall(r'\b(\w+_recomp)\s*\(\s*(?:RDRAM_ARG|uint8_t\s*\*\s*rdram)', open(f, errors='ignore').read()))
 
 missing = sorted(c for c in called - emitted - provided - {'LOOKUP_FUNC'})
