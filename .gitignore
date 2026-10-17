@@ -2,3 +2,8 @@
 *.n64
 *.v64
 __pycache__/
+rom/
+RecompiledFuncs/
+external/
+asm/
+*.log

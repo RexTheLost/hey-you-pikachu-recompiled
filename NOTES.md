@@ -109,19 +109,45 @@ Callers:
 - Set table `0x80106D2C` (ROM `0xAFEAC`): **43 sets**, 8 bytes each: `{u32 count, u32 *word_ids}`. One set per scene/context (3–109 words each, e.g. set 42 = rock/scissors/paper)
 - Name variants like "Pikachu2…8" or "apple2" are alternate pronunciations of the same word. The recognizer can collapse them (strip the trailing digit) and report the first matching slot.
 
+## Recompilation (working)
+`tools/regen.sh` runs the whole pipeline, from ROM to verified `RecompiledFuncs/`:
+1. spimdisasm main `.text` (ROM `0x1000–0x60C50`) and overlay `.text` (ROM `0xB3C70–0xCC5B0`) → `asm/`
+2. `tools/gen_syms.py` builds `syms/hyp.syms.toml` (N64Recomp symbol-file mode, no ELF). Function starts are the union of:
+   - spimdisasm functions
+   - all `jal` targets (including overlay→main calls)
+   - n64sym and manual names
+   Two special cases:
+   - Data range `0x8004AB94–0x8004C8A0` (font tables inside `.text`) is excluded.
+   - `handle_CpU` is not a function start.
+3. `N64Recomp.exe hyp.recomp.toml` → 2457 functions, of which 2301 are emitted. The other 156 are libultra, which the runtime provides or which are ignored.
+4. `tools/check_link.py`: every call target is defined by the emitted code, N64ModernRuntime, or `src/`. **0 unresolved.**
+5. `gcc -fsyntax-only` on all 47 output files with `-include include/hyp_extra_decls.h`: **0 errors, 0 warnings.**
+
+Stability findings:
+- n64sym named 293 functions. A scan of the emitted code finds no direct MMIO/PIF/COP0 access, so no unnamed libultra function slipped through.
+- Float mode: MIPS2 (odd FPRs only appear as double high halves), so `uses_mips3_float_mode` is off.
+- Config `ignored`: `vimgr_text_0180` (VI manager thread) and `func_80051E48` (motor helper). Both are only reachable from runtime-reimplemented functions.
+- `src/runtime_gaps.cpp` supplies functions that are on N64Recomp's ignored list but missing from N64ModernRuntime: `__f_to_ull`, `__ll_rshift`, `osGetIntMask`, `osDpGetCounters`, `__osVoiceSetADConverter`.
+- External pins:
+  - N64Recomp `ffb39cd`
+  - N64ModernRuntime `cdf5abb`
+  - n64sym `master`, patched locally: `#ifdef WIN32` → `#if defined(WIN32) || defined(_WIN32)` so it builds with MinGW
+
 ## Port plan
-1. **Recomp:** N64Recomp over main (`0x80000400`) plus the single overlay (`0x8010AAF0`); RT64 for graphics.
-2. **VRU replacement**, hooking layer 2 (simplest, keeps the game logic intact):
-   - `vruProbe`/`vruInit` → report present, `D_8009D530 = 1`, and still perform the word-data DMA.
-   - `vruLoadSet(setId)` → tell the PC recognizer which grammar to use (names from set `setId`), then return 1.
-   - `vruPoll` → when the PC recognizer has a final result, fill `D_800F8AD8`:
-     - `answer[]`: up to 5 slots, ranked
-     - `distance[]`: map confidence to 0…~3000, with ≤ 2000 meaning accepted
-     - `voice_level`: from mic RMS, ≥ 200 when speech is audible
+1. **Runtime app (next):** N64ModernRuntime (librecomp + ultramodern) + RT64, modeled on Zelda64Recomp. Compile `RecompiledFuncs` + `src/` into an exe.
+   - Needs: ROM loading/hash check, `recomp_entrypoint`, overlay section table for `0x8010AAF0`, controller mapping, EEPROM save (game probes the EEPROM).
+2. **VRU replacement at layer 1 (osVoice*)**. N64Recomp already treats `osVoice*` as runtime-reimplemented, and librecomp's stubs return "no device" or assert. So we provide our own:
+   - `osVoiceInit` → 0 (present). The game also checks VRU id `D_8009D990 == 1`, which our init sets via the rdram pointer, or we patch.
+   - `osVoiceClearDictionary(n)` → reset the slot list.
+   - `osVoiceSetWord(word)` → hash the phoneme blob and look up the word name (599 distinct blobs, **no collisions** between different names), then append it to the slot list. The recognizer grammar is the slot list.
+   - `osVoiceStart/StopReadData` → open/close the mic stream.
+   - `osVoiceGetReadData` → while listening, return status 0xC/busy. On a final result, fill `OSVoiceData`:
+     - `answer[]`: ranked slots
+     - `distance[]`: confidence mapped to 0…3000 (≤ 2000 = accepted)
+     - `voice_level`: mic RMS, ≥ 200 when audible
      - `voice_time`
-     - then set `D_800F8AD4 = 1`, `D_800F8AC4 = 7`
-   - Alternative: emulate at layer 1 (`osVoice*`). That's more faithful, but `osVoiceSetWord` only provides phoneme data, so the name ↔ slot mapping would have to be rebuilt by matching voice pointers. Layer 2 is easier.
-3. **Recognizer:** offline (Vosk with a grammar restricted to the active set's phrases, or whisper.cpp plus fuzzy matching). Also provide a keyboard/menu fallback that injects a chosen slot.
+   - Needs no game patching, and keeps the game's own thresholds and fallbacks.
+3. **Recognizer:** offline. Either Vosk with a grammar restricted to the current slot names, or whisper.cpp plus fuzzy matching. Also provide a keyboard/menu fallback that injects a chosen slot.
 
 ## Open questions
 - Set id → scene mapping (which set each scene uses). Find it via `func_80003F30` callers and the overlay.

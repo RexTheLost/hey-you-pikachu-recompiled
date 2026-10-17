@@ -1,0 +1,15 @@
+# N64Recomp config for Hey You, Pikachu! (USA)
+# Run from the repo root: external/N64Recomp/build/N64Recomp.exe hyp.recomp.toml
+
+[input]
+entrypoint = 0x80000400
+symbols_file_path = "syms/hyp.syms.toml"
+rom_file_path = "rom/baserom.us.z64"
+output_func_path = "RecompiledFuncs"
+
+[patches]
+stubs = []
+# Only reachable from libultra functions the runtime reimplements:
+#   vimgr_text_0180 = VI manager thread body (osCreateViManager)
+#   func_80051E48   = motor.c static helper (osMotorInit / __osMotorAccess)
+ignored = ["vimgr_text_0180", "func_80051E48"]

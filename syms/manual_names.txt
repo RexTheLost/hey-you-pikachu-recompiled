@@ -1,0 +1,29 @@
+# vram name  — hand-identified symbols (override n64sym). See NOTES.md.
+# libultra VRU functions n64sym has no signatures for
+8004C8A0 osVoiceInit
+8004CAAC osVoiceSetWord
+8004CDA4 osVoiceClearDictionary
+# game-side voice wrapper
+800404E8 vruInit
+80040608 vruClearDict
+800406B4 vruLoadSet
+8004090C vruStart
+800409CC vruPoll
+80040BA0 vruGetResult
+80040C70 vruGetStatus
+80040C80 vruIsStarted
+80040C8C vruSlotName
+80040CF8 vruSlotCategory
+80040D60 vruSlotAction
+80040DC8 vruGetState
+80040DD4 vruProbe
+80040E64 vruSetMicMode
+80040F10 vruGetMicMode
+80040440 vruSlotToWord
+80012508 voiceGetEvent
+# boot / loaders
+80000400 entrypoint
+80000450 bootMain
+80037B1C dmaCopy
+800135C0 overlayLoad
+8000BD70 gameOverlayStart
