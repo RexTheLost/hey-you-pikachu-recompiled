@@ -19,7 +19,10 @@ ROM: `D:\AI\Hey You, Pikachu! (USA).z64`
 - **3D rendering fixed** (`patches/rt64/0002-f3dam-texture-t-scale.patch`):
   - F3DAM keeps the **texture T scale at `G_MW_FOG + 0x10`**. The game's gSPTexture emits `G_TEXTURE` with S only (T field 0), immediately followed by `DB080010 0000TTTT`.
   - RT64 first treated that write as the fog factor, which made every lit model white. After that was fixed, it ignored the write and left T = 0, which smeared textures (streaky ground, faceless Pikachu).
-  - Now offset 0 sets fog and offset 0x10 sets `textureState.tc`. Verified: textured ground, trees, and Pikachu's face (`docs/title_fixed.png`, `docs/gameplay_say_something.png`).
+  - Now offset 0 sets fog and offset 0x10 sets the T scale.
+  - **F3DAM texture scales are s.15** (`0x7FFF` ~ 1.0, `0x4000` = 0.5), not F3DEX2's 0.16. At F3DEX2 scale, textures were magnified 2×. With clamped 8×8 textures, Pikachu's eyes became huge black discs, and the ground looked blurry.
+  - The `+0x10` handler (F3DAM-only, always right after `G_TEXTURE`) now doubles both S and T.
+  - Verified: correct Pikachu face and sharp forest textures (`docs/title_fixed.png`, `docs/gameplay_forest.png`).
 - Release packaging (`tools/package.ps1`):
   - GUI exe with no console window (set `HYP_CONSOLE=1` for one).
   - ROM picker on first run.
