@@ -13,7 +13,22 @@ namespace hyp::vru {
         int slot;                 // index the game registered it at (osVoiceSetWord order)
         std::string name;         // game's word name, e.g. "come-here", "Pikachu2"
         std::string display;      // spoken form, e.g. "come here", "Pikachu"
+        int category = 0;         // word table category (see group_name)
     };
+
+    // Every word in the game's table, for browsing (merged by spoken form).
+    struct WordInfo {
+        std::string display;
+        int category = 0;
+        int variants = 0;         // pronunciations / table entries with this spoken form
+        std::vector<int> sets;    // word sets that contain it
+    };
+    std::vector<WordInfo> all_words();     // empty until the game has loaded its word data
+    int set_count();
+    std::string set_name(int set);         // e.g. "Fishing & lunch"
+    int active_set();                      // set matching the current dictionary, or -1
+    // Display group for a word: "Calling Pikachu", "Commands", "Items", ...
+    std::string group_name(int category, const std::string& display);
 
     // Current dictionary (copy) and a counter that changes whenever it does.
     std::vector<DictionaryWord> dictionary(unsigned* generation = nullptr);

@@ -27,6 +27,51 @@ namespace {
     constexpr gpr VRU_ID_WORD = (gpr)(int32_t)0x8009D990u;   // id read by osVoiceInit; vruInit wants 1
     constexpr gpr WORD_TABLE = (gpr)(int32_t)0x8010452Cu;    // {char* name, u16* voice, u32 category, u32 action}
     constexpr int WORD_TABLE_COUNT = 640;
+    constexpr gpr SET_TABLE = (gpr)(int32_t)0x80106D2Cu;     // 43 x {u32 count, u32* word_ids}
+    constexpr int SET_COUNT = 43;
+
+    // Names for the 43 word sets, from what each contains (the game has none).
+    const char* const set_names[SET_COUNT] = {
+        "General talk",                  // 0  start, on-to-the-next-stage! (heard in the bedroom)
+        "Items (all)",                   // 1  every food/object name
+        "Talk & answers",                // 2  thats-fine, not-that-one, way-to-go
+        "Talk about an item",            // 3  toss it, how's it taste/smell/sound?
+        "Talk about food",               // 4  you can taste it, put that back
+        "Talk: staying over",            // 5  stay with me, stay at my house
+        "Flowers",                       // 6  its running away, flower bud, rose
+        "Tag & garden",                  // 7  tag you're it, watering can
+        "Digging for treasure",          // 8  dig, dig there, cannon
+        "Treasure",                      // 9  hang on, buried treasure, I love you
+        "Hide & seek, counting",         // 10 behind you, how many?
+        "Steering: left, right, stop",   // 11 go left/right, turn around, keep going
+        "Cooking: recipe & ingredients", // 12 recipe, ingredients, notepad
+        "Praise & insults",              // 13 great job, cool, stupid
+        "Waking Pikachu",                // 14 wake up, get up, good morning
+        "Collecting objects",            // 15 bring it here, marbles, magnet
+        "Food",                          // 16 eat it
+        "Coins & jewels",                // 17 coin, jewel, gold coin
+        "At home: quiz, TV, tidying",    // 18 quiz time, tv, clean it up
+        "Pok\u00E9mon names A", "Pok\u00E9mon names B", "Pok\u00E9mon names C", "Pok\u00E9mon names D",
+        "Pok\u00E9mon names E", "Pok\u00E9mon names F", "Pok\u00E9mon names G", "Pok\u00E9mon names H",
+        "Pok\u00E9mon names I", "Pok\u00E9mon names J", "Pok\u00E9mon names K", // 19-29
+        "Answers: right or wrong",       // 30 thats right, correct, bingo
+        "Places",                        // 31 Viridian Forest, Ochre Woods, ...
+        "Calling Pikachu",               // 32 c'mere, come here, over here
+        "Talk: mushrooms & boxes",       // 33 jumbo shroom, cardboard box
+        "Fishing & lunch",               // 34 reel it in, pull harder, let's eat
+        "Replies: OK, no, why?",         // 35 I understand, how come?
+        "Goodbyes",                      // 36 take care, I'll miss you
+        "Heading out",                   // 37 c'mon let's go, we're off
+        "Answers & games",               // 38 thats right, tag you're it
+        "Exploring: what is it?",        // 39 what's wrong?, let's check it out
+        "Talk: acorns & balloons",       // 40 acorn, balloon, Poke disc
+        "Bedtime",                       // 41 sleep tight, see you tomorrow
+        "Rock, paper, scissors",         // 42
+    };
+
+    struct TableWord { std::string name, display; int category; std::vector<uint16_t> blob; };
+    std::vector<TableWord> table;                       // the game's 640 words
+    std::vector<std::vector<int>> sets;                 // word ids per set
 
     // OSVoiceHandle: {OSMesgQueue* mq; int channel; s32 mode; u8 status}
     constexpr int HANDLE_MQ = 0x0, HANDLE_CHANNEL = 0x4, HANDLE_MODE = 0x8, HANDLE_STATUS = 0xC;
@@ -91,8 +136,34 @@ namespace {
             gpr entry = WORD_TABLE + i * 16;
             gpr name_ptr = (gpr)(int32_t)MEM_W(0, entry);
             gpr voice_ptr = (gpr)(int32_t)MEM_W(4, entry);
-            names_by_blob.emplace(read_blob(rdram, voice_ptr), read_cstr(rdram, name_ptr));
+            std::string name = read_cstr(rdram, name_ptr);
+            auto blob = read_blob(rdram, voice_ptr);
+            names_by_blob.emplace(blob, name);
+            table.push_back({ name, display_name(name), (int)MEM_W(8, entry), blob });
         }
+        for (int s = 0; s < SET_COUNT; s++) {
+            gpr set = SET_TABLE + s * 8;
+            int count = MEM_W(0, set);
+            gpr ids = (gpr)(int32_t)MEM_W(4, set);
+            std::vector<int> words;
+            for (int k = 0; k < count && k < 256; k++) {
+                int id = MEM_W(k * 4, ids);
+                if (id >= 0 && id < WORD_TABLE_COUNT) words.push_back(id);
+            }
+            sets.push_back(std::move(words));
+        }
+    }
+
+    // The set whose words (by voice pattern, in order) are the current dictionary.
+    std::vector<std::vector<uint16_t>> dict_blobs;
+    int find_active_set() {
+        for (int s = 0; s < (int)sets.size(); s++) {
+            if (sets[s].size() != dict_blobs.size()) continue;
+            bool same = true;
+            for (size_t k = 0; same && k < dict_blobs.size(); k++) same = table[sets[s][k]].blob == dict_blobs[k];
+            if (same) return s;
+        }
+        return -1;
     }
 
     void set_status(uint8_t* rdram, gpr handle, uint8_t status) {
@@ -159,6 +230,64 @@ bool hyp::vru::listening() {
     return is_listening;
 }
 
+std::vector<hyp::vru::WordInfo> hyp::vru::all_words() {
+    std::lock_guard lock{ mutex };
+    std::vector<WordInfo> out;
+    std::map<std::string, size_t> index;
+    for (int id = 0; id < (int)table.size(); id++) {
+        std::string key = table[id].display;
+        for (auto& c : key) c = (char)std::tolower((unsigned char)c);
+        auto [it, added] = index.emplace(key, out.size());
+        if (added) out.push_back({ table[id].display, table[id].category, 0, {} });
+        WordInfo& w = out[it->second];
+        w.variants++;
+        for (int s = 0; s < (int)sets.size(); s++) {
+            if (std::find(sets[s].begin(), sets[s].end(), id) != sets[s].end() &&
+                std::find(w.sets.begin(), w.sets.end(), s) == w.sets.end()) {
+                w.sets.push_back(s);
+            }
+        }
+    }
+    for (auto& w : out) std::sort(w.sets.begin(), w.sets.end());
+    return out;
+}
+
+int hyp::vru::set_count() {
+    return SET_COUNT;
+}
+
+std::string hyp::vru::set_name(int set) {
+    return set >= 0 && set < SET_COUNT ? set_names[set] : "Unknown";
+}
+
+int hyp::vru::active_set() {
+    std::lock_guard lock{ mutex };
+    static unsigned cached_generation = ~0u;
+    static int cached = -1;
+    if (cached_generation != dict_generation) {
+        cached_generation = dict_generation;
+        cached = find_active_set();
+    }
+    return cached;
+}
+
+std::string hyp::vru::group_name(int category, const std::string& display) {
+    std::string d = display;
+    for (auto& c : d) c = (char)std::tolower((unsigned char)c);
+    bool pikachu_call = d.rfind("pika", 0) == 0 || d.rfind("pi ", 0) == 0 || d == "pikka" || d == "hey you pikachu";
+    if (pikachu_call) return "Calling Pikachu";
+    switch (category) {
+        case 0x2: return "Greetings & talk";
+        case 0x3: return "Commands";
+        case 0x4: case 0x5: case 0x9: return "Praise & feelings";
+        case 0x6: return "Items";
+        case 0xA: return "Pok\u00E9mon & things";
+        case 0xB: return "Questions";
+        case 0x12: return "Places";
+        default: return "Other";
+    }
+}
+
 // ---- osVoice* (libultra) ----
 
 // s32 osVoiceInit(OSMesgQueue* mq, OSVoiceHandle* handle, int channel)
@@ -177,6 +306,7 @@ extern "C" void osVoiceInit_recomp(uint8_t* rdram, recomp_context* ctx) {
 extern "C" void osVoiceClearDictionary_recomp(uint8_t* rdram, recomp_context* ctx) {
     std::lock_guard lock{ mutex };
     dict.clear();
+    dict_blobs.clear();
     dict_generation++;
     pending_slot = -1;
     pending_reject = false;
@@ -190,7 +320,10 @@ extern "C" void osVoiceSetWord_recomp(uint8_t* rdram, recomp_context* ctx) {
     auto blob = read_blob(rdram, ctx->r5);
     auto it = names_by_blob.find(blob);
     std::string name = it != names_by_blob.end() ? it->second : ("word" + std::to_string(dict.size()));
-    dict.push_back({ (int)dict.size(), name, display_name(name) });
+    int category = 0;
+    for (const auto& t : table) if (t.blob == blob) { category = t.category; break; }
+    dict.push_back({ (int)dict.size(), name, display_name(name), category });
+    dict_blobs.push_back(blob);
     dict_generation++;
     ctx->r2 = 0;
 }

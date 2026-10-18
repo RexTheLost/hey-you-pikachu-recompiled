@@ -254,6 +254,11 @@ Stability findings:
 - venv with rabbitizer, spimdisasm, splat64, m2c (in the session scratchpad; recreate as needed)
 - `tools/dump_vru_dict.py <rom> <out.json>`
 
+## Word sets and the picker
+- Word table entries are `{name, voice, category, action}`; category groups words: 2 greetings/talk, 3 commands, 4/5/9 praise and feelings, 6 items, 0xA Pokemon and objects, 0xB questions, 0x12 places. The TCRF notes page lists the same table (name, sizes, voice codes, checksum).
+- The 43 sets (ROM `0xAFEAC`) have no names in the game; `set_names` in vru.cpp names them from their contents. The active set is found by matching the dictionary's voice patterns to a set (`hyp::vru::active_set`). Observed: bedroom free roam = set 0, Viridian Forest practice = set 5.
+- Picker tabs: "Say now" (active set, grouped) and "Browse all words" (all 458 spoken forms, read-only, with the sets that use each).
+
 ## Microphone recognizer (src/vru/vru_mic.cpp, src/vru/asr.cpp)
 - whisper.cpp v1.9.4 submodule (lib/whisper.cpp), static CPU build with AVX2/FMA/F16C (`GGML_NATIVE OFF`, so it runs on Haswell+). Model: `data/models/ggml-base.en.bin` (sha1 137c4040...), dev copy in `models/` (gitignored).
 - Push-to-talk follows the game: Z held -> game calls osVoiceStartReadData -> `mic_listen_start` records (with 0.3 s pre-roll). Ends on Z release, 0.7 s silence after speech, or 5 s. While recognizing, `mic_talk_update` keeps Z held so the game keeps listening; the result goes through `say_slot` like the picker, or `say_unrecognized` (distance 3000, which voiceGetEvent rejects).
