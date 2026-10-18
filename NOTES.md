@@ -293,3 +293,7 @@ Stability findings:
   - Segment (16 bytes): `float a, b, c; s16 d_int; u8 d_frac; u8 duration`; value = a t^3 + b t^2 + c t + d (d = d_int + d_frac/256); `duration` x `DAT_800a0558` time units; duration 0xFF = end (hold d). Segment walk: `FUN_8000a000`.
 - Motion start: `FUN_8000e208(obj)`, motion id at `*(s16*)(obj->0x54 + 0xFC)`; vector tracks evaluated by `FUN_8000a410` (position) / `FUN_8000a4d4` (rotation, delta-applied).
 - Tools: `tools/ghidra/DecompileAll.java` dumps every function's C (`build/decomp_all.c`).
+- **Actions** (what the game asks for): table at `0x8006B590`, 330 x 0x2C bytes; +4 = pointer to a Japanese EUC-JP developer name, +0x10 (s16) = motion id. Started by `FUN_8000EAF8`/`FUN_8000EBA0(ext, action, ...)`; current action at `ext+0x100`. English names: `docs/action_names_en.tsv`; per-motion names: `docs/motion_names.txt`.
+- Skeletons by root part id = object type: 37 = Pikachu (motions 28-201, joints 38-77); Caterpie 0-7, Bulbasaur 10-14, Venusaur 15-19, Ghost 20-23, Butterfree 203, Squirtle 222-229, Oddish/Gloom 205-215, etc.
+- Joint channels are rotations in degrees; time unit 1/30 s (`DAT_800a0558`).
+- `data/motion.log` (always on): each object's motion changes with stage, type, action, motion, and the last word heard. `tools/export_motions.py` -> `build/motions/motion_NNN.json` (segments + 30 fps samples) and `index.md`.

@@ -82,7 +82,8 @@ extern "C" void hyp_force_save_check(uint8_t* rdram, recomp_context* ctx) {
 // Motion log (data/motion.log, rewritten each launch): each time an object starts a
 // motion, func_8000E914(obj) runs. Logged only when that object's motion changes.
 //   obj+0x34 (s16): object type (0x25 looks like Pikachu)
-//   obj+0x54 -> ext: ext+0xFC (s16) motion id, ext+0xF8 & 7 motion mode (1/2/3)
+//   obj+0x54 -> ext: ext+0xFC (s16) motion id, ext+0x100 (s16) action id (table at
+//   0x8006B590, names in docs/action_names_en.tsv), ext+0xF8 & 7 motion mode (1/2/3)
 extern "C" void hyp_trace_motion(uint8_t* rdram, recomp_context* ctx) {
     static FILE* log = [] {
         std::filesystem::path dir = ".";
@@ -103,6 +104,7 @@ extern "C" void hyp_trace_motion(uint8_t* rdram, recomp_context* ctx) {
     int motion = (int16_t)MEM_H(0xFC, ext);
     int type = (int16_t)MEM_H(0x34, obj);
     int mode = MEM_W(0xF8, ext) & 7;
+    int action = (int16_t)MEM_H(0x100, ext);
 
     std::lock_guard lock{ mutex };
     auto [it, added] = last_motion.emplace((uint32_t)obj, motion);
@@ -110,9 +112,9 @@ extern "C" void hyp_trace_motion(uint8_t* rdram, recomp_context* ctx) {
     it->second = motion;
     if (log == nullptr) return;
     std::string heard = hyp::vru::mic_last_heard(3.0);
-    std::fprintf(log, "%8.2f  stage %2d  obj %08X type %3d (0x%02X)  motion %3d  mode %d%s%s\n",
+    std::fprintf(log, "%8.2f  stage %2d  obj %08X type %3d (0x%02X)  action %3d  motion %3d  mode %d%s%s\n",
                  std::chrono::duration<double>(std::chrono::steady_clock::now() - start).count(),
-                 current_stage, (uint32_t)obj, type, type & 0xFFFF, motion, mode,
+                 current_stage, (uint32_t)obj, type, type & 0xFFFF, action, motion, mode,
                  heard.empty() ? "" : "  | heard: ", heard.c_str());
     std::fflush(log);
 }
