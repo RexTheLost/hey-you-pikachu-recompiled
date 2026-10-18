@@ -297,3 +297,10 @@ Stability findings:
 - Skeletons by root part id = object type: 37 = Pikachu (motions 28-201, joints 38-77); Caterpie 0-7, Bulbasaur 10-14, Venusaur 15-19, Ghost 20-23, Butterfree 203, Squirtle 222-229, Oddish/Gloom 205-215, etc.
 - Joint channels are rotations in degrees; time unit 1/30 s (`DAT_800a0558`).
 - `data/motion.log` (always on): each object's motion changes with stage, type, action, motion, and the last word heard. `tools/export_motions.py` -> `build/motions/motion_NNN.json` (segments + 30 fps samples) and `index.md`.
+
+## Motion player (src/motion_player.cpp, src/motion_player_window.cpp)
+- F2 or Tools > Motion player: pick a Pikachu action (named) or raw motion 28-201; requests queue and each plays to its end (length table 0x800773E0) before the next; Repeat replays it each time it ends.
+- Runs on the game thread from the frame-loop hook: `func_800120AC(obj)` then `func_8000F534(obj, action, 0.1f)` like the game's scene code; Pikachu's object is the global `0x800760A8`. Raw motions borrow action 74's motion field for the call.
+- While ours plays, the dispatcher hook (`func_8000E914`, returns early) skips the game's other motions for Pikachu and restores ext+0xEC..0x117.
+- Scripted scenes (start-screen demo, morning TV/gate tutorial) drive Pikachu directly and still override it; free roam works.
+- HYP_CONTROL: `action <id>`, `motion <id>`, `repeat on|off`.

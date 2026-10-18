@@ -25,6 +25,7 @@
 #include "hyp_audio.h"
 #include "hyp_input.h"
 #include "hyp_menu.h"
+#include "hyp_motion.h"
 #include "hyp_settings.h"
 #include "hyp_vru.h"
 
@@ -44,6 +45,7 @@ namespace {
         ID_INPUT_MIC_DEFAULT = 600, ID_INPUT_MIC_FIRST,                      // + device index
         ID_INPUT_PICKER = 650,
         ID_HELP_CONTROLS = 700, ID_HELP_ABOUT,
+        ID_TOOLS_MOTION = 800,
         MAX_DEVICES = 64,
     };
 
@@ -285,6 +287,10 @@ namespace {
         AppendMenuW(input, MF_STRING, ID_INPUT_PICKER, L"&Word picker (talk to Pikachu)\tTab");
         AppendMenuW(menu_bar, MF_POPUP, (UINT_PTR)input, L"&Input");
 
+        HMENU tools = CreatePopupMenu();
+        AppendMenuW(tools, MF_STRING, ID_TOOLS_MOTION, L"&Motion player (make Pikachu move)\tF2");
+        AppendMenuW(menu_bar, MF_POPUP, (UINT_PTR)tools, L"&Tools");
+
         HMENU help = CreatePopupMenu();
         AppendMenuW(help, MF_STRING, ID_HELP_CONTROLS, L"&Controls\tF1");
         AppendMenuW(help, MF_SEPARATOR, 0, nullptr);
@@ -336,6 +342,9 @@ namespace {
             hyp::vru::mic_set_device(s.microphone);
         } else if (id == ID_INPUT_PICKER) {
             hyp::vru::toggle_picker();
+        } else if (id == ID_TOOLS_MOTION) {
+            hyp::motion::toggle_window();
+            return;
         } else if (id == ID_HELP_CONTROLS) {
             hyp::menu::show_controls();
         } else if (id == ID_HELP_ABOUT) {
@@ -429,7 +438,8 @@ void hyp::menu::show_controls() {
         L"  T F G H\tD-pad\n"
         L"  Tab\t\tWord picker: pick what to say to Pikachu\n"
         L"  F11, Alt+Enter\tFullscreen\n"
-        L"  F1\t\tThis help\n\n"
+        L"  F1\t\tThis help\n"
+        L"  F2\t\tMotion player\n\n"
         L"Controller\n"
         L"  Left stick\tMove\n"
         L"  A\t\tA button\n"

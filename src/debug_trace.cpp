@@ -14,6 +14,7 @@
 
 #include "recomp.h"
 #include "hyp_trace.h"
+#include "hyp_motion.h"
 #include "hyp_vru.h"
 
 namespace {
@@ -60,6 +61,8 @@ extern "C" void hyp_trace_save_request(uint8_t* rdram, recomp_context* ctx) {
 extern "C" void func_80032D44(uint8_t* rdram, recomp_context* ctx);
 
 extern "C" void hyp_force_save_check(uint8_t* rdram, recomp_context* ctx) {
+    // This hook runs once per game frame on the game thread: also the motion player's tick.
+    hyp::motion::game_tick(rdram, ctx);
     static const char* env = std::getenv("HYP_FORCE_SAVE_AT");
     static bool done = false;
     static const auto start = std::chrono::steady_clock::now();
@@ -84,7 +87,7 @@ extern "C" void hyp_force_save_check(uint8_t* rdram, recomp_context* ctx) {
 //   obj+0x34 (s16): object type (0x25 looks like Pikachu)
 //   obj+0x54 -> ext: ext+0xFC (s16) motion id, ext+0x100 (s16) action id (table at
 //   0x8006B590, names in docs/action_names_en.tsv), ext+0xF8 & 7 motion mode (1/2/3)
-extern "C" void hyp_trace_motion(uint8_t* rdram, recomp_context* ctx) {
+extern "C" int hyp_trace_motion(uint8_t* rdram, recomp_context* ctx) {
     static FILE* log = [] {
         std::filesystem::path dir = ".";
 #ifdef _WIN32
@@ -100,7 +103,9 @@ extern "C" void hyp_trace_motion(uint8_t* rdram, recomp_context* ctx) {
 
     gpr obj = ctx->r4;
     gpr ext = (gpr)(int32_t)MEM_W(0x54, obj);
-    if (ext == 0) return;
+    if (ext == 0) return 0;
+    // The motion player's motion is still playing: skip the game's new one.
+    if (hyp::motion::block_dispatch(rdram, obj)) return 1;
     int motion = (int16_t)MEM_H(0xFC, ext);
     int type = (int16_t)MEM_H(0x34, obj);
     int mode = MEM_W(0xF8, ext) & 7;
@@ -108,13 +113,14 @@ extern "C" void hyp_trace_motion(uint8_t* rdram, recomp_context* ctx) {
 
     std::lock_guard lock{ mutex };
     auto [it, added] = last_motion.emplace((uint32_t)obj, motion);
-    if (!added && it->second == motion) return;
+    if (!added && it->second == motion) return 0;
     it->second = motion;
-    if (log == nullptr) return;
+    if (log == nullptr) return 0;
     std::string heard = hyp::vru::mic_last_heard(3.0);
     std::fprintf(log, "%8.2f  stage %2d  obj %08X type %3d (0x%02X)  action %3d  motion %3d  mode %d%s%s\n",
                  std::chrono::duration<double>(std::chrono::steady_clock::now() - start).count(),
                  current_stage, (uint32_t)obj, type, type & 0xFFFF, action, motion, mode,
                  heard.empty() ? "" : "  | heard: ", heard.c_str());
     std::fflush(log);
+    return 0;
 }

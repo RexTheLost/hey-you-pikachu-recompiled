@@ -15,6 +15,7 @@
 
 #include "hyp_asr.h"
 #include "hyp_control.h"
+#include "hyp_motion.h"
 #include "hyp_vru.h"
 
 namespace {
@@ -88,6 +89,15 @@ namespace {
             } else {
                 std::printf("[control] can't read %s\n", path.c_str());
             }
+        } else if (cmd == "action" || cmd == "motion") {
+            int id = -1;
+            in >> id;
+            if (cmd == "action") hyp::motion::play_action(id);
+            else hyp::motion::play_motion(id);
+        } else if (cmd == "repeat") {
+            std::string on;
+            in >> on;
+            hyp::motion::set_repeat(on == "on");
         } else if (cmd == "save") {
             save_requested = true;
         } else if (cmd == "shot") {

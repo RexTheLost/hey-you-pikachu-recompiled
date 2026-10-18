@@ -46,10 +46,11 @@ text = "hyp_trace_save_request(rdram, ctx);"
 # which is where the game issues its own saves. (Not vruPoll: that runs on the
 # service thread that executes save requests, so saving from it would self-deadlock.)
 # Motion log: every motion start goes through this dispatcher (data/motion.log).
+# Returns 1 to skip a game-requested motion while the motion player's one plays.
 [[patches.hook]]
 func = "func_8000E914"
 before_vram = 0x8000E914
-text = "hyp_trace_motion(rdram, ctx);"
+text = "if (hyp_trace_motion(rdram, ctx)) return;"
 
 [[patches.hook]]
 func = "func_8000BB8C"

@@ -9,6 +9,8 @@
 //   stick <x> <y> <seconds>          analog stick, -1..1
 //   say <word>                       VRU word (as in the picker)
 //   speak <file.wav>                 press Z and use the clip as the microphone utterance
+//   action <id> / motion <id>        make Pikachu play an action / motion
+//   repeat on|off                    keep replaying it
 //   save                             run the game's own save routine (game thread)
 //   shot <file.png>                  screenshot of the game window
 //   quit

@@ -40,6 +40,7 @@
 #include "hyp_game.h"
 #include "hyp_input.h"
 #include "hyp_menu.h"
+#include "hyp_motion.h"
 #include "hyp_render.h"
 #include "hyp_settings.h"
 #include "hyp_trace.h"
@@ -171,6 +172,9 @@ namespace {
                     }
                     if (event.key.keysym.scancode == SDL_SCANCODE_F1) {
                         hyp::menu::show_controls();
+                    }
+                    if (event.key.keysym.scancode == SDL_SCANCODE_F2 && !event.key.repeat) {
+                        hyp::motion::toggle_window();
                     }
                     break;
             }
