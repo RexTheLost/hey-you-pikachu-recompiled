@@ -129,11 +129,17 @@ namespace {
                 float letters = ratio(got, want_joined);
                 // Sound-alike counts a bit less than spelling; spelling breaks ties.
                 float score = std::max(letters, sound_ratio(got, want_joined)) + 0.01f * letters;
-                // Extra words around the phrase ("hey pikachu!") cost a little, and
-                // matches later in the transcript cost more: on short clips whisper
-                // sometimes loops ("Pikachu, pikachu, pika pika..."), and the first
-                // words are what was actually said.
-                score -= 0.02f * (float)(heard.size() - len) + 0.04f * (float)start;
+                // Other words around the phrase ("hey pikachu!") cost a little, and more
+                // when they come first. Repeats of the matched words are free: whisper
+                // often loops on short clips ("flower, flower, flower...").
+                auto in_window = [&](const std::string& w) {
+                    for (size_t k = start; k < start + len; k++) if (heard[k] == w) return true;
+                    return false;
+                };
+                int before = 0, after = 0;
+                for (size_t k = 0; k < start; k++) before += !in_window(heard[k]);
+                for (size_t k = start + len; k < heard.size(); k++) after += !in_window(heard[k]);
+                score -= 0.02f * (float)(before + after) + 0.04f * (float)before;
                 best = std::max(best, score);
             }
         }
@@ -187,14 +193,20 @@ hyp::asr::Result hyp::asr::recognize(const std::vector<float>& pcm, const std::v
         std::lock_guard lock{ ctx_mutex };
         if (ctx == nullptr) return {};
 
-        // Bias the decoder toward what the game is listening for.
+        // Bias the decoder toward what the game is listening for. Written as separate
+        // short sentences: a comma-separated list primes whisper to answer with a list
+        // and loop ("flower, flower, flower...").
         std::string prompt;
+        int style = std::getenv("HYP_ASR_PROMPT") ? std::atoi(std::getenv("HYP_ASR_PROMPT")) : 1;
         for (const auto& p : phrases) {
+            if (style == 2) break;
             if (prompt.find(p) != std::string::npos) continue;
-            prompt += prompt.empty() ? p : ", " + p;
+            if (!prompt.empty()) prompt += style == 0 ? ", " : ". ";
+            prompt += p;
+            if (style == 1 && !p.empty()) prompt[prompt.size() - p.size()] = (char)std::toupper((unsigned char)p[0]);
             if (prompt.size() > 600) break;
         }
-        prompt += ".";
+        if (!prompt.empty()) prompt += ".";
 
         whisper_full_params params = whisper_full_default_params(WHISPER_SAMPLING_GREEDY);
         params.n_threads = (int)std::clamp(std::thread::hardware_concurrency(), 1u, 8u);
@@ -216,6 +228,13 @@ hyp::asr::Result hyp::asr::recognize(const std::vector<float>& pcm, const std::v
 
         // whisper wants at least 1 s of audio; pad short utterances with silence.
         std::vector<float> audio = pcm;
+        // Quiet microphones: bring the peak up to about half scale (at most 20x).
+        float peak = 0.0f;
+        for (float s : audio) peak = std::max(peak, std::abs(s));
+        if (peak > 0.0f) {
+            float gain = std::min(0.5f / peak, 20.0f);
+            if (gain > 1.0f) for (float& s : audio) s *= gain;
+        }
         // Encode only about as much audio as there is (whisper's default is a full
         // 30 s window): much faster for short words. HYP_ASR_AUDIO_CTX overrides (0 = full).
         int audio_ctx = std::max(256, (int)(audio.size() * 50 / sample_rate) + 128);

@@ -16,7 +16,9 @@
 #include <cmath>
 #include <condition_variable>
 #include <cstdio>
+#include <cctype>
 #include <deque>
+#include <fstream>
 #include <mutex>
 #include <thread>
 
@@ -69,7 +71,9 @@ namespace {
         for (size_t i = 0; i < n; i++) sum += (double)s[i] * s[i];
         float rms = (float)std::sqrt(sum / (double)n);
         if (state == State::Recording) peak_rms = std::max(peak_rms, rms);
-        bool voice = rms > std::max(0.012f, noise_floor * 4.0f);
+        // Twice the background level counts as voice. Headset mics can be quiet:
+        // speech peaking at 0.01 over a 0.0045 background is normal for some.
+        bool voice = rms > std::max(0.003f, noise_floor * 2.0f);
         if (voice) {
             heard_speech = true;
             last_voice = clock_type::now();
@@ -122,10 +126,45 @@ namespace {
         if (hyp_trace_enabled()) std::printf("[mic] capturing from '%s'\n", device_name.empty() ? "(default)" : device_name.c_str());
     }
 
+    // On a miss, list what the game was listening for (once per dictionary).
+    void log_dictionary(const std::vector<hyp::vru::DictionaryWord>& words) {
+        static std::string last;
+        std::string list;
+        for (const auto& w : words) list += (list.empty() ? "" : ", ") + w.display;
+        if (list == last) return;
+        last = list;
+        std::printf("[mic] the game was listening for %zu words: %s\n", words.size(), list.c_str());
+    }
+
+    // Troubleshooting: HYP_MIC_SAVE=<folder> keeps every utterance as a WAV file.
+    void save_clip(const std::vector<float>& audio, const std::string& text) {
+        static const char* dir = std::getenv("HYP_MIC_SAVE");
+        if (dir == nullptr) return;
+        static int count = 0;
+        std::string name;
+        for (char c : text) if (std::isalnum((unsigned char)c) || c == ' ') name += c == ' ' ? '_' : c;
+        if (name.size() > 40) name.resize(40);
+        std::filesystem::create_directories(dir);
+        char file[64];
+        std::snprintf(file, sizeof(file), "%03d", count++);
+        std::ofstream out(std::filesystem::path(dir) / (std::string(file) + name + ".wav"), std::ios::binary);
+        auto put32 = [&](uint32_t v) { out.write(reinterpret_cast<const char*>(&v), 4); };
+        auto put16 = [&](uint16_t v) { out.write(reinterpret_cast<const char*>(&v), 2); };
+        uint32_t bytes = (uint32_t)audio.size() * 2;
+        out.write("RIFF", 4); put32(36 + bytes); out.write("WAVEfmt ", 8);
+        put32(16); put16(1); put16(1); put32(rate); put32(rate * 2); put16(2); put16(16);
+        out.write("data", 4); put32(bytes);
+        for (float s : audio) put16((uint16_t)(int16_t)std::clamp(s * 32767.0f, -32768.0f, 32767.0f));
+    }
+
     // Ends the recording and moves to recognition (under the lock).
     void finish_recording() {
         if (state != State::Recording) return;
         finish_requested = false;
+        // Even if the voice detector never fired, a deliberate press (0.4 s+) with any
+        // sound above the background still goes to the recognizer.
+        bool held_long = utterance.size() >= preroll_samples + rate * 4 / 10;
+        if (!heard_speech && held_long && peak_rms > std::max(0.002f, noise_floor * 1.5f)) heard_speech = true;
         if (!heard_speech) {
             // Nothing said: let the game stop listening on its own.
             std::printf("[mic] no speech heard (loudest %.4f, background %.4f)\n", peak_rms, noise_floor);
@@ -153,14 +192,21 @@ namespace {
             std::vector<std::string> phrases;
             for (const auto& w : words) phrases.push_back(w.display);
             auto r = hyp::asr::recognize(audio, phrases);
+            save_clip(audio, r.text);
 
-            if (r.index >= 0) {
+            bool blank = std::none_of(r.text.begin(), r.text.end(), [](char c) { return std::isalnum((unsigned char)c); });
+            if (blank) {
+                // Whisper heard no words: same as not speaking.
+                std::printf("[mic] no words recognized (%.2f s audio)\n", audio.size() / (double)rate);
+                set_heard("(nothing)");
+            } else if (r.index >= 0) {
                 std::printf("[mic] heard \"%s\" -> %s (score %.2f, %.2f s audio, %.2f s)\n", r.text.c_str(),
                             words[r.index].name.c_str(), r.score, audio.size() / (double)rate, r.seconds);
                 set_heard(words[r.index].display);
                 hyp::vru::say_slot(words[r.index].slot);
             } else {
                 std::printf("[mic] heard \"%s\" -> no match (best %.2f, %.2f s)\n", r.text.c_str(), r.score, r.seconds);
+                log_dictionary(words);
                 set_heard(r.text.empty() ? "?" : "? (" + r.text + ")");
                 hyp::vru::say_unrecognized();
             }
