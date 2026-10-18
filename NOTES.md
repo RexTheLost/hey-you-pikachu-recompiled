@@ -281,3 +281,15 @@ Stability findings:
 - Audio output switching reopens the SDL device under `audio_device_mutex` (queue_samples / get_frames_remaining take it too).
 - Controller choice: `hyp::input::select_controller` ("" = first connected, "-" = keyboard only), guarded by a mutex since input is read on game threads.
 - Settings: `data/settings.json` (src/settings.cpp).
+
+## Animation system (motions) — first pass
+- Motions are keyframed **tracks**, evaluated on the CPU; each body part gets a full matrix per frame (`G_MTX` load + `DE` into model segment 0x0A).
+- Motion data: **ROM `0xB77EB0`**, ~2 MB, 231 motions, streamed on demand (resource handle `0x800B6930`, `FUN_80017290`).
+  - `0x80077778[id]`: motion start offset in the block; header float at +0 (speed/scale, e.g. 10.4 for motion 0).
+  - `0x80077048[id]`: offset of the motion's part list: `{u32 part_id, u32 offset}` pairs, ending at id 0. Motion 0 has 9 parts (ids 8, 38, 39, 42, 43, 62, 63, 82, 83).
+  - `0x800773E0[id]`: length in seconds (float).
+  - Each part: 3 position + 3 rotation channels, 8 bytes each `{u32 type, u32 offset}` (offset relative to the block, relocated at load by `FUN_8000a34c`/`a3ac`).
+- Channel types (`FUN_8000a26c`): 0 = constant (16.16 fixed), 1 = cubic segments (`FUN_8000a0f4`), 2 = linear segments (`FUN_8000a1f0`).
+  - Segment (16 bytes): `float a, b, c; s16 d_int; u8 d_frac; u8 duration`; value = a t^3 + b t^2 + c t + d (d = d_int + d_frac/256); `duration` x `DAT_800a0558` time units; duration 0xFF = end (hold d). Segment walk: `FUN_8000a000`.
+- Motion start: `FUN_8000e208(obj)`, motion id at `*(s16*)(obj->0x54 + 0xFC)`; vector tracks evaluated by `FUN_8000a410` (position) / `FUN_8000a4d4` (rotation, delta-applied).
+- Tools: `tools/ghidra/DecompileAll.java` dumps every function's C (`build/decomp_all.c`).
