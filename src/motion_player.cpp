@@ -67,6 +67,18 @@ namespace {
         queued_count = (int)queue.size();
     }
 
+    // A raw motion borrows the carrier action's motion field until it ends: the game
+    // starts every action with a blend into its first pose (mode 3), then re-reads the
+    // action's motion to play it (mode 1).
+    gpr borrowed_field = 0;
+    int16_t borrowed_saved = 0;
+
+    void release_carrier(uint8_t* rdram) {
+        if (borrowed_field == 0) return;
+        MEM_H(0, borrowed_field) = borrowed_saved;
+        borrowed_field = 0;
+    }
+
     gpr pikachu(uint8_t* rdram) {
         gpr obj = (gpr)(int32_t)MEM_W(0, PIKACHU_OBJ);
         if (obj == 0 || (uint32_t)obj < 0x80000000u || (uint32_t)obj >= 0x80800000u) return 0;
@@ -76,10 +88,13 @@ namespace {
     }
 
     void start(uint8_t* rdram, recomp_context* ctx, gpr obj, Kind kind, int id) {
+        release_carrier(rdram);
         int action = kind == Kind::Action ? id : CARRIER_ACTION;
-        gpr motion_field = ACTION_TABLE + action * ACTION_SIZE + 0x10;
-        int16_t saved_motion = (int16_t)MEM_H(0, motion_field);
-        if (kind == Kind::Motion) MEM_H(0, motion_field) = (int16_t)id;
+        if (kind == Kind::Motion) {
+            borrowed_field = ACTION_TABLE + action * ACTION_SIZE + 0x10;
+            borrowed_saved = (int16_t)MEM_H(0, borrowed_field);
+            MEM_H(0, borrowed_field) = (int16_t)id;
+        }
 
         recomp_context saved = *ctx;
         ctx->r4 = obj;
@@ -90,7 +105,6 @@ namespace {
         func_8000F534(rdram, ctx);
         *ctx = saved;
 
-        MEM_H(0, motion_field) = saved_motion;
         gpr ext = (gpr)(int32_t)MEM_W(0x54, obj);
         // Snapshot our request right away: Pikachu's AI may overwrite it in the same frame,
         // before the dispatcher runs.
@@ -150,7 +164,11 @@ bool hyp::motion::block_dispatch(unsigned char* rdram_, int32_t obj_) {
     gpr obj = obj_;
     if (playing_kind == Kind::None || !have_state || obj != playing_obj) return false;
     gpr ext = (gpr)(int32_t)MEM_W(0x54, obj);
-    if ((int16_t)MEM_H(0xFC, ext) == playing_motion) return false;
+    if ((int16_t)MEM_H(0xFC, ext) == playing_motion) {
+        // Ours, e.g. the game moving from the blend into playing it: remember this state.
+        for (int i = 0; i < (STATE_END - STATE_START) / 4; i++) saved_state[i] = MEM_W(STATE_START + i * 4, ext);
+        return false;
+    }
     if (!confirmed) {
         // Ours hasn't started and the game replaced the request: put ours back and let
         // this dispatch start it.
@@ -173,6 +191,7 @@ void hyp::motion::game_tick(unsigned char* rdram_, void* ctx_) {
     if (obj == 0) {
         motion_now = -1;
         playing_kind = Kind::None;
+        release_carrier(rdram);
         return;
     }
     gpr ext = (gpr)(int32_t)MEM_W(0x54, obj);
@@ -184,6 +203,7 @@ void hyp::motion::game_tick(unsigned char* rdram_, void* ctx_) {
         queue.clear();
         queued_count = 0;
         playing_kind = Kind::None;
+        release_carrier(rdram);
     }
 
     if (playing_kind != Kind::None) {
@@ -196,6 +216,7 @@ void hyp::motion::game_tick(unsigned char* rdram_, void* ctx_) {
         if (!confirmed && elapsed() > 1.0) {
             hyp::vru::voice_log("[motion] the game replaced it before it started (scripted scene?)\n");
             playing_kind = Kind::None;
+            release_carrier(rdram);
         } else if (elapsed() < length_s + 0.05) {
             return; // let it finish
         }
@@ -217,5 +238,6 @@ void hyp::motion::game_tick(unsigned char* rdram_, void* ctx_) {
         start(rdram, ctx, obj, playing_kind, playing_id);
     } else {
         playing_kind = Kind::None;
+        release_carrier(rdram);
     }
 }

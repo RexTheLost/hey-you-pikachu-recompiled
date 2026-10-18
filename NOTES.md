@@ -302,5 +302,6 @@ Stability findings:
 - F2 or Tools > Motion player: pick a Pikachu action (named) or raw motion 28-201; requests queue and each plays to its end (length table 0x800773E0) before the next; Repeat replays it each time it ends.
 - Runs on the game thread from the frame-loop hook: `func_800120AC(obj)` then `func_8000F534(obj, action, 0.1f)` like the game's scene code; Pikachu's object is the global `0x800760A8`. Raw motions borrow action 74's motion field for the call.
 - While ours plays, the dispatcher hook (`func_8000E914`, returns early) skips the game's other motions for Pikachu and restores ext+0xEC..0x117.
+- Starting an action is two steps: `func_8000EAF8` sets a blend into the motion's first pose (mode 3, ext+0xEC = -2 - action), then the game re-starts the action from the table (`func_8000EBA0`, mode 1) to play it. Raw motions therefore keep action 74's motion field borrowed until they end.
 - Scripted scenes (start-screen demo, morning TV/gate tutorial) drive Pikachu directly and still override it; free roam works.
 - HYP_CONTROL: `action <id>`, `motion <id>`, `repeat on|off`.
