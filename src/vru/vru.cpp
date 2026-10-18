@@ -335,10 +335,12 @@ extern "C" void osVoiceStartReadData_recomp(uint8_t* rdram, recomp_context* ctx)
     set_status(rdram, ctx->r4, 0);
     is_listening = true;
     listen_start = std::chrono::steady_clock::now();
-    if (hyp_trace_enabled()) {
-        std::printf("[vru] listening; dictionary %zu words:", dict.size());
-        for (size_t i = 0; i < dict.size() && i < 12; i++) std::printf(" %s", dict[i].name.c_str());
-        std::printf("%s\n", dict.size() > 12 ? " ..." : "");
+    {
+        std::string first;
+        for (size_t i = 0; i < dict.size() && i < 12; i++) first += " " + dict[i].name;
+        int set = find_active_set();
+        hyp::vru::voice_log("[vru] game is listening (set %d, %zu words:%s%s)\n", set, dict.size(), first.c_str(),
+                            dict.size() > 12 ? " ..." : "");
     }
     bool picked = pending_slot >= 0;
     lock.unlock();
@@ -353,6 +355,7 @@ extern "C" void osVoiceStopReadData_recomp(uint8_t* rdram, recomp_context* ctx) 
     set_status(rdram, ctx->r4, 0);
     is_listening = false;
     lock.unlock();
+    hyp::vru::voice_log("[vru] game stopped listening\n");
     hyp::vru::mic_listen_stop();
     ctx->r2 = 0;
 }
@@ -384,10 +387,8 @@ extern "C" void osVoiceGetReadData_recomp(uint8_t* rdram, recomp_context* ctx) {
         MEM_H(0x0A + i * 2, data) = 0x7FFF;
         MEM_H(0x14 + i * 2, data) = 0x7FFF;
     }
-    if (hyp_trace_enabled()) {
-        if (pending_reject) std::printf("[vru] heard nothing usable (rejected result)\n");
-        else std::printf("[vru] heard slot %d (%s)\n", pending_slot, dict[pending_slot].name.c_str());
-    }
+    if (pending_reject) hyp::vru::voice_log("[vru] game got: not understood\n");
+    else hyp::vru::voice_log("[vru] game got: %s (slot %d)\n", dict[pending_slot].name.c_str(), pending_slot);
 
     pending_slot = -1;
     pending_reject = false;

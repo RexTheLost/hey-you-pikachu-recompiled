@@ -60,6 +60,8 @@ namespace hyp::vru {
     // while the mic needs Z held for the game (finishing / recognizing an utterance).
     bool mic_talk_update(bool talk_pressed);
     std::string mic_last_heard(double max_age_seconds); // "" if nothing recent
+    // Voice log: stdout plus data/voice.log (rewritten each launch), for troubleshooting.
+    void voice_log(const char* fmt, ...);
     // Test aid: the next utterance uses this audio instead of the microphone.
     void mic_inject(std::vector<float> pcm);
 }

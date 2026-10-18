@@ -14,6 +14,7 @@
 #include <atomic>
 #include <chrono>
 #include <cmath>
+#include <cstdarg>
 #include <condition_variable>
 #include <cstdio>
 #include <cctype>
@@ -54,6 +55,12 @@ namespace {
     clock_type::time_point last_voice;
     bool finish_requested = false;
     std::vector<float> injected;   // test audio for the next utterance
+
+    FILE* voice_log_file = nullptr;
+    std::mutex log_mutex;
+    bool talk_was_pressed = false;
+    clock_type::time_point talk_pressed_since;
+    bool warned_not_listening = false;
 
     std::mutex heard_mutex;
     std::string last_heard;
@@ -116,24 +123,29 @@ namespace {
         want.callback = capture_callback;
         device = SDL_OpenAudioDevice(device_name.empty() ? nullptr : device_name.c_str(), 1, &want, nullptr, 0);
         if (device == 0) {
-            std::fprintf(stderr, "[mic] could not open '%s': %s\n", device_name.c_str(), SDL_GetError());
+            hyp::vru::voice_log("[mic] could not open '%s': %s\n", device_name.c_str(), SDL_GetError());
             if (status != hyp::vru::MicStatus::NoModel && status != hyp::vru::MicStatus::Loading) {
                 status = hyp::vru::MicStatus::NoMicrophone;
             }
             return;
         }
         SDL_PauseAudioDevice(device, 0);
-        if (hyp_trace_enabled()) std::printf("[mic] capturing from '%s'\n", device_name.empty() ? "(default)" : device_name.c_str());
+        hyp::vru::voice_log("[mic] capturing from '%s'\n", device_name.empty() ? "(default)" : device_name.c_str());
     }
 
     // On a miss, list what the game was listening for (once per dictionary).
     void log_dictionary(const std::vector<hyp::vru::DictionaryWord>& words) {
         static std::string last;
         std::string list;
-        for (const auto& w : words) list += (list.empty() ? "" : ", ") + w.display;
+        std::string seen = "|";
+        for (const auto& w : words) {
+            if (seen.find("|" + w.display + "|") != std::string::npos) continue;
+            seen += w.display + "|";
+            list += (list.empty() ? "" : ", ") + w.display;
+        }
         if (list == last) return;
         last = list;
-        std::printf("[mic] the game was listening for %zu words: %s\n", words.size(), list.c_str());
+        hyp::vru::voice_log("[mic] the game was listening for %zu words: %s\n", words.size(), list.c_str());
     }
 
     // Troubleshooting: HYP_MIC_SAVE=<folder> keeps every utterance as a WAV file.
@@ -167,7 +179,7 @@ namespace {
         if (!heard_speech && held_long && peak_rms > std::max(0.002f, noise_floor * 1.5f)) heard_speech = true;
         if (!heard_speech) {
             // Nothing said: let the game stop listening on its own.
-            std::printf("[mic] no speech heard (loudest %.4f, background %.4f)\n", peak_rms, noise_floor);
+            hyp::vru::voice_log("[mic] no speech heard (loudest %.4f, background %.4f)\n", peak_rms, noise_floor);
             set_heard("(nothing - is the right microphone selected?)");
             state = State::Idle;
             utterance.clear();
@@ -197,15 +209,15 @@ namespace {
             bool blank = std::none_of(r.text.begin(), r.text.end(), [](char c) { return std::isalnum((unsigned char)c); });
             if (blank) {
                 // Whisper heard no words: same as not speaking.
-                std::printf("[mic] no words recognized (%.2f s audio)\n", audio.size() / (double)rate);
+                hyp::vru::voice_log("[mic] no words recognized (%.2f s audio)\n", audio.size() / (double)rate);
                 set_heard("(nothing)");
             } else if (r.index >= 0) {
-                std::printf("[mic] heard \"%s\" -> %s (score %.2f, %.2f s audio, %.2f s)\n", r.text.c_str(),
+                hyp::vru::voice_log("[mic] heard \"%s\" -> %s (score %.2f, %.2f s audio, %.2f s)\n", r.text.c_str(),
                             words[r.index].name.c_str(), r.score, audio.size() / (double)rate, r.seconds);
                 set_heard(words[r.index].display);
                 hyp::vru::say_slot(words[r.index].slot);
             } else {
-                std::printf("[mic] heard \"%s\" -> no match (best %.2f, %.2f s)\n", r.text.c_str(), r.score, r.seconds);
+                hyp::vru::voice_log("[mic] heard \"%s\" -> no match (best %.2f, %.2f s)\n", r.text.c_str(), r.score, r.seconds);
                 log_dictionary(words);
                 set_heard(r.text.empty() ? "?" : "? (" + r.text + ")");
                 hyp::vru::say_unrecognized();
@@ -216,7 +228,27 @@ namespace {
     }
 }
 
+void hyp::vru::voice_log(const char* fmt, ...) {
+    char line[1024];
+    va_list args;
+    va_start(args, fmt);
+    std::vsnprintf(line, sizeof(line), fmt, args);
+    va_end(args);
+    std::lock_guard lock{ log_mutex };
+    std::fputs(line, stdout);
+    if (voice_log_file != nullptr) {
+        static const auto start = clock_type::now();
+        std::fprintf(voice_log_file, "%8.2f  %s", std::chrono::duration<double>(clock_type::now() - start).count(), line);
+        std::fflush(voice_log_file);
+    }
+}
+
 void hyp::vru::mic_init(const std::filesystem::path& model_path, const std::string& microphone) {
+    {
+        // model: <exe>/data/models/x.bin -> log: <exe>/data/voice.log
+        std::lock_guard lock{ log_mutex };
+        voice_log_file = std::fopen((model_path.parent_path().parent_path() / "voice.log").string().c_str(), "w");
+    }
     {
         std::lock_guard lock{ mutex };
         device_name = microphone;
@@ -224,7 +256,7 @@ void hyp::vru::mic_init(const std::filesystem::path& model_path, const std::stri
     status = MicStatus::Loading;
     std::thread([model_path] {
         if (!std::filesystem::exists(model_path)) {
-            std::fprintf(stderr, "[mic] speech model not found: %s\n", model_path.string().c_str());
+            hyp::vru::voice_log("[mic] speech model not found: %s\n", model_path.string().c_str());
             status = MicStatus::NoModel;
             return;
         }
@@ -233,7 +265,7 @@ void hyp::vru::mic_init(const std::filesystem::path& model_path, const std::stri
             status = MicStatus::NoModel;
             return;
         }
-        std::printf("[mic] speech model loaded in %.2f s\n", std::chrono::duration<double>(clock_type::now() - start).count());
+        hyp::vru::voice_log("[mic] speech model loaded in %.2f s\n", std::chrono::duration<double>(clock_type::now() - start).count());
         std::lock_guard lock{ mutex };
         open_device();
         if (device != 0) status = MicStatus::Ready;
@@ -285,7 +317,22 @@ void hyp::vru::mic_listen_stop() {
 }
 
 bool hyp::vru::mic_talk_update(bool talk_pressed) {
+    // Holding Z while the game isn't listening (mic icon crossed out) does nothing in
+    // the game; say so once per press so it doesn't look like the microphone failed.
+    bool game_listening = hyp::vru::listening();
     std::lock_guard lock{ mutex };
+    auto now = clock_type::now();
+    if (talk_pressed && !talk_was_pressed) {
+        talk_pressed_since = now;
+        warned_not_listening = false;
+    }
+    talk_was_pressed = talk_pressed;
+    if (talk_pressed && !game_listening && state == State::Idle && !warned_not_listening &&
+        now - talk_pressed_since > std::chrono::milliseconds(600)) {
+        warned_not_listening = true;
+        hyp::vru::voice_log("[mic] Z is held, but the game isn't listening for words right now\n");
+        set_heard("(Pikachu isn't listening right now)");
+    }
     if (state == State::Recording && !talk_pressed) {
         finish_recording();
     }
