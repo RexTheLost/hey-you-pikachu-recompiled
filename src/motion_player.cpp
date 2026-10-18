@@ -92,11 +92,14 @@ namespace {
 
         MEM_H(0, motion_field) = saved_motion;
         gpr ext = (gpr)(int32_t)MEM_W(0x54, obj);
+        // Snapshot our request right away: Pikachu's AI may overwrite it in the same frame,
+        // before the dispatcher runs.
+        for (int i = 0; i < (STATE_END - STATE_START) / 4; i++) saved_state[i] = MEM_W(STATE_START + i * 4, ext);
         playing_kind = kind;
         playing_id = id;
         playing_motion = (int16_t)MEM_H(0xFC, ext);
         playing_obj = obj;
-        have_state = false;
+        have_state = true;
         confirmed = false;
         length_s = 0.0;
         if (playing_motion >= 0 && playing_motion < 231) {
@@ -146,10 +149,17 @@ bool hyp::motion::block_dispatch(unsigned char* rdram_, int32_t obj_) {
     uint8_t* rdram = rdram_;
     gpr obj = obj_;
     if (playing_kind == Kind::None || !have_state || obj != playing_obj) return false;
-    if (elapsed() >= length_s) return false;
     gpr ext = (gpr)(int32_t)MEM_W(0x54, obj);
     if ((int16_t)MEM_H(0xFC, ext) == playing_motion) return false;
-    // The game asked for another motion: keep ours.
+    if (!confirmed) {
+        // Ours hasn't started and the game replaced the request: put ours back and let
+        // this dispatch start it.
+        if (elapsed() > 1.0) return false;
+        for (int i = 0; i < (STATE_END - STATE_START) / 4; i++) MEM_W(STATE_START + i * 4, ext) = saved_state[i];
+        return false;
+    }
+    if (elapsed() >= length_s) return false;
+    // Ours is playing and the game asked for another motion: keep ours.
     for (int i = 0; i < (STATE_END - STATE_START) / 4; i++) MEM_W(STATE_START + i * 4, ext) = saved_state[i];
     MEM_H(0x118, ext) = 0;
     return true;
