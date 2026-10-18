@@ -19,6 +19,7 @@
 #include <thread>
 #include <vector>
 
+#include "hyp_menu.h"
 #include "hyp_vru.h"
 
 namespace {
@@ -169,6 +170,8 @@ namespace {
         if (sel == LB_ERR) return;
         LPARAM slot = SendMessageW(word_list, LB_GETITEMDATA, sel, 0);
         if (slot != HEADER_ITEM) hyp::vru::say_slot((int)slot);
+        // Give the keyboard back to the game, so Z and the other keys keep working.
+        if (HWND game = (HWND)hyp::menu::native_window()) SetForegroundWindow(game);
     }
 
     void layout(HWND hwnd) {

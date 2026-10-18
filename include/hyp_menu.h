@@ -9,6 +9,8 @@ namespace hyp::menu {
     void attach(SDL_Window* window);
     void toggle_fullscreen();
     void show_controls();
+    // The game window's native handle (HWND on Windows), or nullptr before attach.
+    void* native_window();
 }
 
 #endif

@@ -381,6 +381,10 @@ bool hyp::vru::mic_talk_update(bool talk_pressed) {
     return state != State::Idle;
 }
 
+void hyp::vru::mic_notice(const std::string& text) {
+    set_heard(text);
+}
+
 std::string hyp::vru::mic_last_heard(double max_age_seconds) {
     std::lock_guard lock{ heard_mutex };
     if (last_heard.empty() || clock_type::now() - last_heard_time > std::chrono::duration<double>(max_age_seconds)) return "";

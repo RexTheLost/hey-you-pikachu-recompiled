@@ -62,6 +62,8 @@ namespace hyp::vru {
     std::string mic_last_heard(double max_age_seconds); // "" if nothing recent
     // Voice log: stdout plus data/voice.log (rewritten each launch), for troubleshooting.
     void voice_log(const char* fmt, ...);
+    // Short message for the window title (shown a few seconds), e.g. a focus problem.
+    void mic_notice(const std::string& text);
     // Test aid: the next utterance uses this audio instead of the microphone.
     void mic_inject(std::vector<float> pcm);
 }

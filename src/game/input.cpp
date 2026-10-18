@@ -18,6 +18,10 @@
 
 #include "SDL.h"
 
+#ifdef _WIN32
+#include <Windows.h>
+#endif
+
 #include "hyp_control.h"
 #include "hyp_input.h"
 #include "hyp_vru.h"
@@ -70,11 +74,14 @@ void hyp::input::handle_controller_event(const SDL_Event& event) {
     std::lock_guard lock{ controller_mutex };
     if (event.type == SDL_CONTROLLERDEVICEADDED && controller == nullptr) {
         open_preferred_controller();
+        const char* name = controller != nullptr ? SDL_GameControllerName(controller) : nullptr;
+        if (name != nullptr) hyp::vru::voice_log("[input] controller connected: %s\n", name);
     }
     else if (event.type == SDL_CONTROLLERDEVICEREMOVED && controller != nullptr &&
              event.cdevice.which == SDL_JoystickInstanceID(SDL_GameControllerGetJoystick(controller))) {
         SDL_GameControllerClose(controller);
         controller = nullptr;
+        hyp::vru::voice_log("[input] controller disconnected\n");
         open_preferred_controller(); // fall back to another connected controller, if any
     }
 }
@@ -126,6 +133,7 @@ bool hyp::input::get_n64_input(int controller_num, uint16_t* buttons, float* x, 
     sx += (keys[SDL_SCANCODE_RIGHT] ? 1.0f : 0.0f) - (keys[SDL_SCANCODE_LEFT] ? 1.0f : 0.0f);
     sy += (keys[SDL_SCANCODE_UP] ? 1.0f : 0.0f) - (keys[SDL_SCANCODE_DOWN] ? 1.0f : 0.0f);
 
+    bool keyboard_z = keys[SDL_SCANCODE_Z] != 0, pad_z = false;
     std::unique_lock controller_lock{ controller_mutex };
     if (controller != nullptr) {
         struct { SDL_GameControllerButton btn; uint16_t bit; } pad_map[] = {
@@ -138,7 +146,10 @@ bool hyp::input::get_n64_input(int controller_num, uint16_t* buttons, float* x, 
         for (const auto& m : pad_map) {
             if (button(m.btn)) b |= m.bit;
         }
-        if (axis(SDL_CONTROLLER_AXIS_TRIGGERLEFT) > c_button_threshold) b |= N64_Z;
+        if (axis(SDL_CONTROLLER_AXIS_TRIGGERLEFT) > c_button_threshold) {
+            b |= N64_Z;
+            pad_z = true;
+        }
         if (axis(SDL_CONTROLLER_AXIS_TRIGGERRIGHT) > c_button_threshold) b |= N64_R;
 
         float rx = axis(SDL_CONTROLLER_AXIS_RIGHTX), ry = axis(SDL_CONTROLLER_AXIS_RIGHTY);
@@ -200,6 +211,26 @@ bool hyp::input::get_n64_input(int controller_num, uint16_t* buttons, float* x, 
 
     // Test aid: live commands from the HYP_CONTROL file.
     hyp::control::apply_input(&b, &sx, &sy);
+
+    // Voice log: where each Z press came from, and Z key presses the game can't see
+    // because another window has the keyboard (a common reason "talking does nothing").
+    {
+        static bool was_z = false, warned_focus = false;
+        bool z = (b & N64_Z) != 0;
+        if (z && !was_z) {
+            hyp::vru::voice_log("[input] Z pressed (%s)\n", keyboard_z ? "keyboard" : pad_z ? "controller trigger" : "test input");
+        }
+        was_z = z;
+#ifdef _WIN32
+        bool z_key_down = (GetAsyncKeyState('Z') & 0x8000) != 0;
+        if (z_key_down && !keyboard_z && !warned_focus) {
+            warned_focus = true;
+            hyp::vru::voice_log("[input] the Z key is down, but the game window doesn't have the keyboard\n");
+            hyp::vru::mic_notice("click the game window first: it doesn't have the keyboard");
+        }
+        if (!z_key_down) warned_focus = false;
+#endif
+    }
 
     // Microphone: the player's own Z press is push-to-talk; keep Z held for the game
     // while the utterance is being finished and recognized.

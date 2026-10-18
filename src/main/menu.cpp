@@ -408,6 +408,10 @@ void hyp::menu::attach(SDL_Window* window) {
     if (s.fullscreen) set_fullscreen(true);
 }
 
+void* hyp::menu::native_window() {
+    return hwnd;
+}
+
 void hyp::menu::toggle_fullscreen() {
     if (hwnd != nullptr) set_fullscreen(!fullscreen);
 }
@@ -439,5 +443,6 @@ void hyp::menu::show_controls() {
 #else
 void hyp::menu::attach(SDL_Window*) {}
 void hyp::menu::toggle_fullscreen() {}
+void* hyp::menu::native_window() { return nullptr; }
 void hyp::menu::show_controls() {}
 #endif
