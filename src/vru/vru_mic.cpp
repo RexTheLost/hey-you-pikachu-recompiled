@@ -1,7 +1,8 @@
 // Microphone input for the emulated VRU.
 //
 // Flow (mirrors the real VRU's push-to-talk):
-//  1. The player holds Z; the game calls osVoiceStartReadData -> mic_listen_start():
+//  1. The game listens (osVoiceStartReadData -> mic_listen_start(), usually because Z
+//     is held, but sometimes on its own) and the player holds Z (mic_talk_update):
 //     we start keeping the captured audio (plus ~0.3 s from before, so the first
 //     syllable isn't lost).
 //  2. The utterance ends when the player lets go of Z, after ~0.7 s of silence
@@ -61,6 +62,8 @@ namespace {
     bool talk_was_pressed = false;
     clock_type::time_point talk_pressed_since;
     bool warned_not_listening = false;
+    bool armed = false;            // the game is listening for a spoken word
+    bool press_used = false;       // this Z press already made an utterance
 
     std::mutex heard_mutex;
     std::string last_heard;
@@ -224,6 +227,7 @@ namespace {
             }
             std::lock_guard lock{ mutex };
             state = State::Idle;
+            if (!blank) armed = false; // the game ends this listen when it takes the result
         }
     }
 }
@@ -287,19 +291,27 @@ hyp::vru::MicStatus hyp::vru::mic_status() {
 }
 
 void hyp::vru::mic_listen_start() {
+    // Recording starts on the player's Z press (mic_talk_update), not here: the game
+    // also starts listening on its own (e.g. after throwing an item) without Z held.
     std::lock_guard lock{ mutex };
-    if (status != MicStatus::Ready || state != State::Idle) return;
-    utterance.assign(preroll.begin(), preroll.end());
-    heard_speech = false;
-    peak_rms = 0.0f;
-    finish_requested = false;
-    state = State::Recording;
-    if (!injected.empty()) { // test audio: the whole utterance is already here
-        utterance.swap(injected);
-        injected.clear();
-        heard_speech = true;
-        finish_requested = true;
-        wake.notify_all();
+    armed = true;
+}
+
+namespace {
+    // Begin an utterance (under the lock).
+    void start_recording() {
+        utterance.assign(preroll.begin(), preroll.end());
+        heard_speech = false;
+        peak_rms = 0.0f;
+        finish_requested = false;
+        state = State::Recording;
+        if (!injected.empty()) { // test audio: the whole utterance is already here
+            utterance.swap(injected);
+            injected.clear();
+            heard_speech = true;
+            finish_requested = true;
+            wake.notify_all();
+        }
     }
 }
 
@@ -310,6 +322,7 @@ void hyp::vru::mic_inject(std::vector<float> pcm) {
 
 void hyp::vru::mic_listen_stop() {
     std::lock_guard lock{ mutex };
+    armed = false;
     if (state == State::Recording) { // the game gave up listening; drop the recording
         state = State::Idle;
         utterance.clear();
@@ -325,8 +338,14 @@ bool hyp::vru::mic_talk_update(bool talk_pressed) {
     if (talk_pressed && !talk_was_pressed) {
         talk_pressed_since = now;
         warned_not_listening = false;
+        press_used = false;
     }
     talk_was_pressed = talk_pressed;
+    // One utterance per Z press, whichever came first: the press or the game listening.
+    if (talk_pressed && !press_used && armed && game_listening && state == State::Idle && status == MicStatus::Ready) {
+        press_used = true;
+        start_recording();
+    }
     if (talk_pressed && !game_listening && state == State::Idle && !warned_not_listening &&
         now - talk_pressed_since > std::chrono::milliseconds(600)) {
         warned_not_listening = true;
