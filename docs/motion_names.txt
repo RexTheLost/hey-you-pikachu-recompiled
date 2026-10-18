@@ -1,0 +1,228 @@
+# motion id -> name, from the action table (docs/action_names_en.tsv); used by tools/export_motions.py
+0 Caterpie: stance / Caterpie: hop in place / Caterpie: face destination / Caterpie: walk / Caterpie: walk to destination / Caterpie: run / Caterpie: run to destination / Caterpie: dash / Caterpie: walk end
+1 Caterpie stance -> curl / Caterpie curl -> stance
+2 Caterpie: curl up
+4 Caterpie stance -> sleep
+5 Caterpie: sleep
+6 Caterpie sleep -> stance
+7 Caterpie: eat
+8 Jellyfish: flail
+9 Jellyfish: swim
+10 Bulbasaur: stance
+11 Bulbasaur: eat
+12 Bulbasaur: walk ST
+13 Bulbasaur: walk LP
+14 Bulbasaur: walk ED
+15 Venusaur: stance
+16 Venusaur: open mouth
+17 Venusaur stance -> sleep
+18 Venusaur: sleep
+19 Venusaur sleep -> stance
+20 Ghost: fly / Ghost: stance
+21 Ghost: scare
+22 Ghost: why?
+23 Ghost: defeated
+24 Crab: flail
+25 Crab: swim
+26 Fish: flail
+27 Fish: swim
+28 Sit cross-legged
+29 Exasperated
+30 Very angry
+31 Angry
+32 Salute
+33 Tap foot ST
+34 Tap foot LP
+35 Tap foot ED
+36 Stamp feet / Turn toward target / Turn toward target, adjust position / Stamp feet and back away / Stamp feet and back away (fast)
+37 Shake foot
+38 Panic
+39 Hop and turn around / Turn away end
+40 Ballet
+41 Surprised
+42 Sulk
+43 Wave bye-bye
+44 Tsk
+45 Warning
+46 Thunder
+47 Thunder (fail)
+48 Thunderbolt
+49 Thunderbolt (fail)
+50 Thundershock
+51 Thundershock (fail)
+52 Eat
+53 Draw picture ST
+54 Draw picture LP
+55 Draw picture ED / Draw picture ED, step back
+56 Draw picture, look up
+57 Show picture / Turn toward target / show picture
+58 Wobble (dizzy)
+59 Turn head / Turn head left
+60 Turn head right
+61 Shiver
+62 Dejected (M)
+63 Dejected (S)
+64 Happy (medium)
+65 Happy (small) / Call out
+66 Rummage
+67 Rummage out ST
+68 Rummage out ED
+69 Harmonica
+70 Miss
+71 Happy head shake / Head shake
+72 Hello
+73 Wiggle bottom
+74 Pick up / Pretend to pick up
+75 Threaten start
+76 Threaten loop
+77 Threaten end
+78 Let's go!
+79 Throw away unwanted 2
+80 Throw away unwanted
+81 Eww (no!)
+82 50 cm jump
+83 Bounce
+84 Forward jump start
+85 Forward jump loop
+86 Forward jump landing
+87 Forward jump collision
+88 Forward jump, falling / Run on all fours -> jump crash
+89 Forward jump, crash landing
+90 Forward jump, knocked out
+91 Forward jump, get up
+92 Watering can
+93 Hold up ST
+94 Hold up LP
+95 Hold up ED
+96 Hold up high ST
+97 Hold up high LP
+98 Hold up high ED
+99 Ready stance L
+100 Ready stance (idle) / Ready stance ending / Watermelon stance -> stance
+101 Swaying ready stance / Turn toward target / sideways stance
+102 Sit down start / Stance -> sit
+103 Sitting
+104 Sit -> stance
+105 Stance -> stand
+106 Tilt head (question) / Tilt head 2
+107 Count
+108 Listen
+109 Mock
+110 "This, this"
+111 Give me
+112 Give me, give me
+113 Grass whistle
+114 Sneeze
+115 Look around
+116 Hop-turn toward target / Hop-turn toward target, adjust position
+117 Hold out front ST
+118 Hold out front LP / Hold out front LP start
+119 Hold out front ED
+120 Dizzy
+121 Look up start / Look up (short) start
+122 Look up middle
+123 Look up end
+124 Fidget (shy)
+125 Annoyed / Turn away start
+126 Absent-minded
+127 Ignore
+128 Throw / Throw weakly / Throw to player / Throw at target
+129 Look up (face up)
+131 Worry
+132 Worry (no hands)
+133 Sniff
+134 NO
+135 Lean forward
+136 Put on top
+137 Can't pull it out ;;
+138 Pulled it out! / Caught one!
+139 Pull out ST / Pull out treasure chest ST / Fishing ST
+140 Pull out LP / Pull out treasure chest / Fishing LP
+141 Start drowning
+142 Drowning
+143 Pat head
+144 Put down
+145 Push ST
+146 Push LP
+147 Push ED
+148 Peace sign
+149 Trumpet
+150 Really?
+151 act_p_right_n_m / act_p_right_n_m_pa
+152 Run on all fours start / Frog jump / Run on all fours to destination / Stance -> run on all fours
+153 Run on all fours loop / run2aimL
+154 Run on all fours end / run2aimE / Run on all fours -> stance
+155 Run on all fours -> jump
+156 Run on all fours -> walk
+157 Cough
+158 Fall asleep
+159 Sleeping
+160 Wake up and stand
+161 Wake up and sit
+162 Watermelon: ready / Stance -> watermelon stance
+163 Watermelon: stamp feet
+164 Watermelon: walk
+165 Watermelon split ST
+166 Watermelon split LP
+167 Watermelon split ED
+168 Watermelon split, give up
+169 Lovely!
+170 Sit and scratch ear
+171 Stand -> stance
+172 Scratch head
+173 Proud
+174 Fishing cast / Grab jump / Dragon-uppercut jump
+175 Trip start
+176 Trip loop
+177 Trip end
+178 Poke
+179 Turn on TV
+180 Hang head ST
+181 Hang head LP
+182 Hang head ED
+183 Nod (uh-huh)
+184 "Your voice is too loud"
+185 "Your voice is too quiet"
+186 Walk into trip start / Walk start / Walk exhausted / Walk to destination / Toddle to destination / Stance -> walk
+187 Walking / walk2aimL
+188 Walk end / walk2aimE / Walk -> stance
+189 Walk -> run on all fours
+190 Laugh (medium)
+191 Laugh (small)
+192 Handing over 2
+193 Hand over start / Hand over start 2
+194 Handing over
+195 Hand over end
+196 Tilt left
+197 Tilt right-left
+198 YES
+199 There, there (pat)
+200 Get on all fours start
+201 All fours end
+202 Other: swim
+203 Butterfree: stance / Butterfree: fly / Butterfree: fly slowly / Butterfree: face destination in air / Butterfree: move to destination
+204 Eat (Charmander)
+205 Gloom: run to destination
+207 KUS_RUN2AIM_CED
+208 Abra: stance
+209 Biped (Squirtle): still / Treasure chest: RESET
+210 Biped (Poliwag): enter water
+211 Treasure chest: open
+212 Oddish: run to destination
+213 N_RUN2AIM_BLP / KUS_RUN2AIM_BLP
+214 N_RUN2AIM_CED
+215 Oddish: jump up / Poliwag: jump up and face target / Treasure chest: jump up
+216 Biped (Poliwag): leave water
+217 Biped (Poliwag): float / Biped: float anywhere
+218 Biped (Poliwag): nod
+219 Biped (Poliwag): walk ST
+220 Biped (Poliwag): walk LP
+221 Biped (Poliwag): walk ED
+222 Greeting (Squirtle) / Greeting anywhere (Squirtle)
+223 Biped (Squirtle): stance / Biped: face destination
+224 Yuck (Squirtle)
+225 Whisper (Squirtle)
+226 Biped run ST
+227 TZ_RUN2AIM_BLP
+228 TZ_RUN2AIM_CED
+229 Eat (Squirtle)

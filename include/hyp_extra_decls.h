@@ -33,6 +33,7 @@ void hyp_trace_decompress(uint8_t* rdram, recomp_context* ctx);
 void hyp_trace_stage_load(uint8_t* rdram, recomp_context* ctx);
 void hyp_trace_save_request(uint8_t* rdram, recomp_context* ctx);
 void hyp_force_save_check(uint8_t* rdram, recomp_context* ctx);
+void hyp_trace_motion(uint8_t* rdram, recomp_context* ctx);
 
 #ifdef __cplusplus
 }

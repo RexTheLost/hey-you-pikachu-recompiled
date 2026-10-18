@@ -4,9 +4,21 @@
 #include <chrono>
 #include <cstdio>
 #include <cstdlib>
+#include <filesystem>
+#include <map>
+#include <mutex>
+
+#ifdef _WIN32
+#include <Windows.h>
+#endif
 
 #include "recomp.h"
 #include "hyp_trace.h"
+#include "hyp_vru.h"
+
+namespace {
+    int current_stage = -1;
+}
 
 bool hyp_trace_enabled() {
     static const bool enabled = std::getenv("HYP_TRACE") != nullptr;
@@ -29,6 +41,7 @@ extern "C" void hyp_trace_decompress(uint8_t* rdram, recomp_context* ctx) {
 }
 
 extern "C" void hyp_trace_stage_load(uint8_t* rdram, recomp_context* ctx) {
+    current_stage = (int)ctx->r5;
     if (!hyp_trace_enabled()) return;
     // func_80033A70(slot, stage, flag)
     std::printf("[stage] slot=%d stage=%d flag=%d\n", (int)ctx->r4, (int)ctx->r5, (int)ctx->r6);
@@ -64,4 +77,42 @@ extern "C" void hyp_force_save_check(uint8_t* rdram, recomp_context* ctx) {
     func_80032D44(rdram, ctx);
     *ctx = saved;
     std::printf("[save] forced save returned\n");
+}
+
+// Motion log (data/motion.log, rewritten each launch): each time an object starts a
+// motion, func_8000E914(obj) runs. Logged only when that object's motion changes.
+//   obj+0x34 (s16): object type (0x25 looks like Pikachu)
+//   obj+0x54 -> ext: ext+0xFC (s16) motion id, ext+0xF8 & 7 motion mode (1/2/3)
+extern "C" void hyp_trace_motion(uint8_t* rdram, recomp_context* ctx) {
+    static FILE* log = [] {
+        std::filesystem::path dir = ".";
+#ifdef _WIN32
+        wchar_t buf[MAX_PATH];
+        GetModuleFileNameW(nullptr, buf, MAX_PATH);
+        dir = std::filesystem::path(buf).parent_path() / "data";
+#endif
+        return std::fopen((dir / "motion.log").string().c_str(), "w");
+    }();
+    static std::map<uint32_t, int> last_motion;
+    static std::mutex mutex;
+    static const auto start = std::chrono::steady_clock::now();
+
+    gpr obj = ctx->r4;
+    gpr ext = (gpr)(int32_t)MEM_W(0x54, obj);
+    if (ext == 0) return;
+    int motion = (int16_t)MEM_H(0xFC, ext);
+    int type = (int16_t)MEM_H(0x34, obj);
+    int mode = MEM_W(0xF8, ext) & 7;
+
+    std::lock_guard lock{ mutex };
+    auto [it, added] = last_motion.emplace((uint32_t)obj, motion);
+    if (!added && it->second == motion) return;
+    it->second = motion;
+    if (log == nullptr) return;
+    std::string heard = hyp::vru::mic_last_heard(3.0);
+    std::fprintf(log, "%8.2f  stage %2d  obj %08X type %3d (0x%02X)  motion %3d  mode %d%s%s\n",
+                 std::chrono::duration<double>(std::chrono::steady_clock::now() - start).count(),
+                 current_stage, (uint32_t)obj, type, type & 0xFFFF, motion, mode,
+                 heard.empty() ? "" : "  | heard: ", heard.c_str());
+    std::fflush(log);
 }
