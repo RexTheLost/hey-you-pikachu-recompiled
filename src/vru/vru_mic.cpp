@@ -52,6 +52,7 @@ namespace {
     std::vector<float> partial_block;
     float noise_floor = 0.003f;
     bool heard_speech = false;
+    bool voice_detected = false;   // the voice detector fired (not just a long press)
     float peak_rms = 0.0f;         // loudest 20 ms block of the current utterance
     clock_type::time_point last_voice;
     bool finish_requested = false;
@@ -86,6 +87,7 @@ namespace {
         bool voice = rms > std::max(0.003f, noise_floor * 2.0f);
         if (voice) {
             heard_speech = true;
+            if (state == State::Recording) voice_detected = true;
             last_voice = clock_type::now();
         } else {
             // Track the background level: fall fast, rise slowly.
@@ -195,12 +197,14 @@ namespace {
     void recognizer_thread() {
         for (;;) {
             std::vector<float> audio;
+            bool had_voice = false;
             {
                 std::unique_lock lock{ mutex };
                 wake.wait(lock, [] { return finish_requested || state == State::Recognizing; });
                 if (finish_requested) finish_recording();
                 if (state != State::Recognizing) continue;
                 audio.swap(utterance);
+                had_voice = voice_detected;
             }
 
             auto words = hyp::vru::dictionary();
@@ -210,6 +214,13 @@ namespace {
             save_clip(audio, r.text);
 
             bool blank = std::none_of(r.text.begin(), r.text.end(), [](char c) { return std::isalnum((unsigned char)c); });
+            // Whisper makes up words from room noise (it once heard "I hate you."). If the
+            // voice detector never fired, only trust a transcript whisper is sure of.
+            if (!blank && r.no_speech > (had_voice ? 0.8f : 0.3f)) {
+                hyp::vru::voice_log("[mic] ignored \"%s\" (probably noise: no-speech %.2f, voice detected: %s)\n",
+                                    r.text.c_str(), r.no_speech, had_voice ? "yes" : "no");
+                blank = true;
+            }
             if (blank) {
                 // Whisper heard no words: same as not speaking.
                 hyp::vru::voice_log("[mic] no words recognized (%.2f s audio)\n", audio.size() / (double)rate);
@@ -290,18 +301,12 @@ hyp::vru::MicStatus hyp::vru::mic_status() {
     return status;
 }
 
-void hyp::vru::mic_listen_start() {
-    // Recording starts on the player's Z press (mic_talk_update), not here: the game
-    // also starts listening on its own (e.g. after throwing an item) without Z held.
-    std::lock_guard lock{ mutex };
-    armed = true;
-}
-
 namespace {
     // Begin an utterance (under the lock).
     void start_recording() {
         utterance.assign(preroll.begin(), preroll.end());
         heard_speech = false;
+        voice_detected = false;
         peak_rms = 0.0f;
         finish_requested = false;
         state = State::Recording;
@@ -309,11 +314,25 @@ namespace {
             utterance.swap(injected);
             injected.clear();
             heard_speech = true;
+            voice_detected = true;
             finish_requested = true;
             wake.notify_all();
         }
     }
 }
+
+void hyp::vru::mic_listen_start() {
+    // Recording starts on the player's Z press (mic_talk_update), not here: the game
+    // also starts listening on its own (e.g. after throwing an item) without Z held.
+    std::lock_guard lock{ mutex };
+    armed = true;
+    if (talk_was_pressed && !press_used && state == State::Idle && status == MicStatus::Ready) {
+        press_used = true;
+        start_recording();
+        hyp::vru::voice_log("[mic] recording (Z was already held)\n");
+    }
+}
+
 
 void hyp::vru::mic_inject(std::vector<float> pcm) {
     std::lock_guard lock{ mutex };
@@ -339,12 +358,16 @@ bool hyp::vru::mic_talk_update(bool talk_pressed) {
         talk_pressed_since = now;
         warned_not_listening = false;
         press_used = false;
+        hyp::vru::voice_log("[mic] Z pressed (game listening: %s)\n", game_listening ? "yes" : "no");
+    } else if (!talk_pressed && talk_was_pressed) {
+        hyp::vru::voice_log("[mic] Z released after %.2f s\n", std::chrono::duration<double>(now - talk_pressed_since).count());
     }
     talk_was_pressed = talk_pressed;
     // One utterance per Z press, whichever came first: the press or the game listening.
     if (talk_pressed && !press_used && armed && game_listening && state == State::Idle && status == MicStatus::Ready) {
         press_used = true;
         start_recording();
+        hyp::vru::voice_log("[mic] recording\n");
     }
     if (talk_pressed && !game_listening && state == State::Idle && !warned_not_listening &&
         now - talk_pressed_since > std::chrono::milliseconds(600)) {

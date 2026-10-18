@@ -19,6 +19,7 @@ namespace hyp::asr {
         float score = 0.0f;    // 0..1 similarity of the best phrase
         std::string text;      // raw transcript
         double seconds = 0.0;  // recognition time
+        float no_speech = 0.0f; // whisper's probability that there was no speech at all
     };
 
     // phrases: the words the game is listening for, as spoken ("come here").

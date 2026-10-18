@@ -189,6 +189,7 @@ hyp::asr::Result hyp::asr::match(const std::string& transcript, const std::vecto
 hyp::asr::Result hyp::asr::recognize(const std::vector<float>& pcm, const std::vector<std::string>& phrases) {
     auto start = std::chrono::steady_clock::now();
     std::string text;
+    float no_speech = 0.0f;
     {
         std::lock_guard lock{ ctx_mutex };
         if (ctx == nullptr) return {};
@@ -244,10 +245,14 @@ hyp::asr::Result hyp::asr::recognize(const std::vector<float>& pcm, const std::v
         if (audio.size() < min_samples) audio.resize(min_samples, 0.0f);
 
         if (whisper_full(ctx, params, audio.data(), (int)audio.size()) == 0) {
-            for (int i = 0; i < whisper_full_n_segments(ctx); i++) text += whisper_full_get_segment_text(ctx, i);
+            for (int i = 0; i < whisper_full_n_segments(ctx); i++) {
+                text += whisper_full_get_segment_text(ctx, i);
+                no_speech = std::max(no_speech, whisper_full_get_segment_no_speech_prob(ctx, i));
+            }
         }
     }
     Result result = match(text, phrases);
+    result.no_speech = no_speech;
     result.seconds = std::chrono::duration<double>(std::chrono::steady_clock::now() - start).count();
     return result;
 }
