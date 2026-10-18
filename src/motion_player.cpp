@@ -1,38 +1,44 @@
 // Motion player: makes Pikachu play any action or motion on command.
 //
 // Requests are queued from any thread and run on the game thread (game_tick, called from
-// the frame-loop hook) through the game's own calls, as its scene code does:
-//   func_800120AC(obj); func_8000F534(obj, action, 0.1f /* blend seconds */);
+// the frame-loop hook) through the same call the game's behavior scripts use:
+//   func_8000F404(obj, action, flag, &ticket)
+// It records the request (ext+0x120), waits for the current motion if one is playing,
+// and runs the action scheduler (func_8000ECB4), which inserts the right transition or
+// blend and then plays the action (mode 1). The AI only issues a new action when no
+// request is pending (ext+0x120 == -1), so it doesn't overwrite ours.
+// (func_8000F534, used first, only blends into an action's first pose: it's for stances.)
+//
 // Pikachu's object is the global at 0x800760A8 (object type 37 at obj+0x34).
-// A raw motion is played by pointing a carrier action's motion field (action table
-// 0x8006B590 + id * 0x2C + 0x10) at it for the duration of the call.
-// Each request plays to its end (length from the table at 0x800773E0) before the next
-// queued one starts; repeat replays it after it ends.
+// A raw motion borrows a carrier action's motion field (action table 0x8006B590 +
+// id * 0x2C + 0x10) until it has played.
+// Each request plays to its end (length from the table at 0x800773E0, counted from when
+// the motion actually starts) before the next queued one; repeat replays it.
 #include <atomic>
 #include <chrono>
 #include <cstdint>
+#include <cstring>
 #include <deque>
 #include <mutex>
 #include <utility>
-
-#include <cstring>
 
 #include "recomp.h"
 #include "hyp_motion.h"
 #include "hyp_vru.h"
 
 extern "C" void func_800120AC(uint8_t* rdram, recomp_context* ctx);
-extern "C" void func_8000F534(uint8_t* rdram, recomp_context* ctx);
+extern "C" void func_8000F404(uint8_t* rdram, recomp_context* ctx);
 
 namespace {
     constexpr gpr PIKACHU_OBJ = (gpr)(int32_t)0x800760A8u;
     constexpr gpr ACTION_TABLE = (gpr)(int32_t)0x8006B590u;
     constexpr int ACTION_SIZE = 0x2C;
     constexpr int ACTION_COUNT = 330;
-    constexpr int CARRIER_ACTION = 74;          // "Ready stance (idle)"
-    constexpr uint32_t BLEND_SECONDS = 0x3DCCCCCD; // 0.1f, as the game passes it
+    constexpr int CARRIER_ACTION = 74;                         // "Ready stance (idle)"
+    constexpr gpr TICKET = (gpr)(int32_t)0x807FFF00u;          // scratch word in unused RDRAM
     constexpr int PIKACHU_TYPE = 37;
-    constexpr gpr MOTION_LENGTHS = (gpr)(int32_t)0x800773E0u; // f32 seconds per motion
+    constexpr gpr MOTION_LENGTHS = (gpr)(int32_t)0x800773E0u;  // f32 seconds per motion
+    constexpr double START_TIMEOUT_S = 4.0;                    // transitions can come first
 
     enum class Kind { None, Action, Motion };
     std::mutex queue_mutex;
@@ -43,19 +49,15 @@ namespace {
     std::atomic<bool> present = false;
     std::atomic<int> motion_now = -1;
 
-    // What is being repeated. The request only takes effect on the next game update
-    // (func_8000F534 sets ext+0x118; func_8000F14C -> func_8000E914 starts the motion).
     Kind playing_kind = Kind::None;
     int playing_id = 0, playing_motion = -1;
     bool confirmed = false;        // the motion has actually started playing
     double length_s = 0.0;         // the playing motion's length
-    // Pikachu's motion fields (ext+0xEC..0x117, set by func_8000EAF8) for our motion, to
-    // put back when the game tries to start another one before ours ends.
-    constexpr int STATE_START = 0xEC, STATE_END = 0x118;
-    uint32_t saved_state[(STATE_END - STATE_START) / 4];
-    bool have_state = false;
-    gpr playing_obj = 0;
     std::chrono::steady_clock::time_point started;
+
+    // Raw motions: the borrowed carrier action's motion field.
+    gpr borrowed_field = 0;
+    int16_t borrowed_saved = 0;
 
     double elapsed() {
         return std::chrono::duration<double>(std::chrono::steady_clock::now() - started).count();
@@ -67,16 +69,15 @@ namespace {
         queued_count = (int)queue.size();
     }
 
-    // A raw motion borrows the carrier action's motion field until it ends: the game
-    // starts every action with a blend into its first pose (mode 3), then re-reads the
-    // action's motion to play it (mode 1).
-    gpr borrowed_field = 0;
-    int16_t borrowed_saved = 0;
-
     void release_carrier(uint8_t* rdram) {
         if (borrowed_field == 0) return;
         MEM_H(0, borrowed_field) = borrowed_saved;
         borrowed_field = 0;
+    }
+
+    void finish(uint8_t* rdram) {
+        playing_kind = Kind::None;
+        release_carrier(rdram);
     }
 
     gpr pikachu(uint8_t* rdram) {
@@ -87,41 +88,39 @@ namespace {
         return ext == 0 ? 0 : obj;
     }
 
+    double motion_length(uint8_t* rdram, int motion) {
+        if (motion < 0 || motion >= 231) return 0.0;
+        uint32_t bits = MEM_W(motion * 4, MOTION_LENGTHS);
+        float f;
+        std::memcpy(&f, &bits, sizeof(f));
+        return f;
+    }
+
     void start(uint8_t* rdram, recomp_context* ctx, gpr obj, Kind kind, int id) {
         release_carrier(rdram);
         int action = kind == Kind::Action ? id : CARRIER_ACTION;
+        gpr motion_field = ACTION_TABLE + action * ACTION_SIZE + 0x10;
         if (kind == Kind::Motion) {
-            borrowed_field = ACTION_TABLE + action * ACTION_SIZE + 0x10;
-            borrowed_saved = (int16_t)MEM_H(0, borrowed_field);
-            MEM_H(0, borrowed_field) = (int16_t)id;
+            borrowed_field = motion_field;
+            borrowed_saved = (int16_t)MEM_H(0, motion_field);
+            MEM_H(0, motion_field) = (int16_t)id;
         }
 
         recomp_context saved = *ctx;
         ctx->r4 = obj;
-        func_800120AC(rdram, ctx);
+        func_800120AC(rdram, ctx);  // stop the current behavior script
         ctx->r4 = obj;
         ctx->r5 = action;
-        ctx->r6 = (gpr)(int32_t)BLEND_SECONDS;
-        func_8000F534(rdram, ctx);
+        ctx->r6 = 0;
+        ctx->r7 = TICKET;
+        func_8000F404(rdram, ctx);
         *ctx = saved;
 
-        gpr ext = (gpr)(int32_t)MEM_W(0x54, obj);
-        // Snapshot our request right away: Pikachu's AI may overwrite it in the same frame,
-        // before the dispatcher runs.
-        for (int i = 0; i < (STATE_END - STATE_START) / 4; i++) saved_state[i] = MEM_W(STATE_START + i * 4, ext);
         playing_kind = kind;
         playing_id = id;
-        playing_motion = (int16_t)MEM_H(0xFC, ext);
-        playing_obj = obj;
-        have_state = true;
+        playing_motion = (int16_t)MEM_H(0, motion_field);
         confirmed = false;
-        length_s = 0.0;
-        if (playing_motion >= 0 && playing_motion < 231) {
-            uint32_t bits = MEM_W(playing_motion * 4, MOTION_LENGTHS);
-            float f;
-            std::memcpy(&f, &bits, sizeof(f));
-            length_s = f;
-        }
+        length_s = motion_length(rdram, playing_motion);
         started = std::chrono::steady_clock::now();
         hyp::vru::voice_log("[motion] Pikachu plays %s %d (motion %d, %.2f s)\n", kind == Kind::Action ? "action" : "motion",
                             id, playing_motion, length_s);
@@ -159,28 +158,9 @@ int hyp::motion::current_motion() {
     return motion_now;
 }
 
-bool hyp::motion::block_dispatch(unsigned char* rdram_, int32_t obj_) {
-    uint8_t* rdram = rdram_;
-    gpr obj = obj_;
-    if (playing_kind == Kind::None || !have_state || obj != playing_obj) return false;
-    gpr ext = (gpr)(int32_t)MEM_W(0x54, obj);
-    if ((int16_t)MEM_H(0xFC, ext) == playing_motion) {
-        // Ours, e.g. the game moving from the blend into playing it: remember this state.
-        for (int i = 0; i < (STATE_END - STATE_START) / 4; i++) saved_state[i] = MEM_W(STATE_START + i * 4, ext);
-        return false;
-    }
-    if (!confirmed) {
-        // Ours hasn't started and the game replaced the request: put ours back and let
-        // this dispatch start it.
-        if (elapsed() > 1.0) return false;
-        for (int i = 0; i < (STATE_END - STATE_START) / 4; i++) MEM_W(STATE_START + i * 4, ext) = saved_state[i];
-        return false;
-    }
-    if (elapsed() >= length_s) return false;
-    // Ours is playing and the game asked for another motion: keep ours.
-    for (int i = 0; i < (STATE_END - STATE_START) / 4; i++) MEM_W(STATE_START + i * 4, ext) = saved_state[i];
-    MEM_H(0x118, ext) = 0;
-    return true;
+bool hyp::motion::block_dispatch(unsigned char*, int32_t) {
+    // Not needed with func_8000F404: the game itself keeps a pending request.
+    return false;
 }
 
 void hyp::motion::game_tick(unsigned char* rdram_, void* ctx_) {
@@ -190,8 +170,7 @@ void hyp::motion::game_tick(unsigned char* rdram_, void* ctx_) {
     present = obj != 0;
     if (obj == 0) {
         motion_now = -1;
-        playing_kind = Kind::None;
-        release_carrier(rdram);
+        finish(rdram);
         return;
     }
     gpr ext = (gpr)(int32_t)MEM_W(0x54, obj);
@@ -202,21 +181,20 @@ void hyp::motion::game_tick(unsigned char* rdram_, void* ctx_) {
         std::lock_guard lock{ queue_mutex };
         queue.clear();
         queued_count = 0;
-        playing_kind = Kind::None;
-        release_carrier(rdram);
+        finish(rdram);
     }
 
     if (playing_kind != Kind::None) {
-        bool requested = (int16_t)MEM_H(0x118, ext) != 0; // not started yet
-        if (!confirmed && !requested && motion == playing_motion) {
-            confirmed = true;
-            for (int i = 0; i < (STATE_END - STATE_START) / 4; i++) saved_state[i] = MEM_W(STATE_START + i * 4, ext);
-            have_state = true;
-        }
-        if (!confirmed && elapsed() > 1.0) {
-            hyp::vru::voice_log("[motion] the game replaced it before it started (scripted scene?)\n");
-            playing_kind = Kind::None;
-            release_carrier(rdram);
+        if (!confirmed) {
+            if (motion == playing_motion && (int16_t)MEM_H(0x118, ext) == 0) {
+                confirmed = true;                 // it's playing: time it from now
+                started = std::chrono::steady_clock::now();
+                hyp::vru::voice_log("[motion] motion %d started\n", playing_motion);
+                return;
+            }
+            if (elapsed() < START_TIMEOUT_S) return;
+            hyp::vru::voice_log("[motion] motion %d never started (scripted scene?)\n", playing_motion);
+            finish(rdram);
         } else if (elapsed() < length_s + 0.05) {
             return; // let it finish
         }
@@ -237,7 +215,6 @@ void hyp::motion::game_tick(unsigned char* rdram_, void* ctx_) {
     } else if (repeat && playing_kind != Kind::None) {
         start(rdram, ctx, obj, playing_kind, playing_id);
     } else {
-        playing_kind = Kind::None;
-        release_carrier(rdram);
+        finish(rdram);
     }
 }
