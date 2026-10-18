@@ -18,8 +18,8 @@ The Voice Recognition Unit is emulated. You pick what to say from a word list no
 | Arrow keys | Left stick | Analog stick |
 | X | A | A |
 | C | B / X | B |
-| Z | Left trigger | **Z — talk to Pikachu (mike switch)** |
-| A / S | LB / RB, right trigger | L / R |
+| Z | LB or left trigger | **Z — talk to Pikachu (mike switch)** |
+| A / S | Y / RB, right trigger | L / R |
 | Enter | Start | Start |
 | I J K L | Right stick | C buttons |
 | T F G H | D-pad | D-pad |
@@ -36,7 +36,7 @@ The window has a menu bar (click it, or press Alt). Your choices are saved in `d
 - **Help**: controls, about.
 
 ### Talking to Pikachu
-**With a microphone:** hold **Z** (keyboard) or the **left trigger**, say the word, and let go.
+**With a microphone:** hold **Z** (keyboard) or **LB / the left trigger** (controller), say the word, and let go.
 - Speech is recognized offline on your PC (whisper.cpp) and matched to the words the game is listening for right then. It takes about a third of a second.
 - What was heard appears briefly in the window title. If nothing matches, Pikachu reacts as if it didn't understand.
 - Choose the microphone in **Input → Microphone**. The speech model is `data\models\ggml-base.en.bin` (included in the release zip).

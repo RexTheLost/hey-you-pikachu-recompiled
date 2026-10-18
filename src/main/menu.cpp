@@ -179,7 +179,7 @@ namespace {
         const auto& s = hyp::settings::get();
         shown_controllers = hyp::input::controller_names();
         std::string active = hyp::input::active_controller_name();
-        std::wstring auto_label = L"Automatic (first connected)";
+        std::wstring auto_label = L"Automatic (all connected)";
         if (s.controller.empty() && !active.empty()) auto_label += L": " + widen(active);
         AppendMenuW(controller_menu, MF_STRING | (s.controller.empty() ? MF_CHECKED : 0), ID_INPUT_PAD_AUTO, auto_label.c_str());
         AppendMenuW(controller_menu, MF_STRING | (s.controller == "-" ? MF_CHECKED : 0), ID_INPUT_KEYBOARD_ONLY, L"Keyboard only");
@@ -434,8 +434,8 @@ void hyp::menu::show_controls() {
         L"  Left stick\tMove\n"
         L"  A\t\tA button\n"
         L"  B / X\t\tB button\n"
-        L"  Left trigger\tZ (microphone switch)\n"
-        L"  LB / RB\t\tL / R\n"
+        L"  LB or LT\t\tZ (talk: hold, speak, let go)\n"
+        L"  Y / RB\t\tL / R\n"
         L"  Right stick\tC buttons\n"
         L"  Start\t\tStart\n",
         L"Controls", MB_ICONINFORMATION);

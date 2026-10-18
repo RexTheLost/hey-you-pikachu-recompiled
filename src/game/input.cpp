@@ -1,11 +1,11 @@
-// Minimal SDL input for the recompiled game: keyboard + first game controller
-// mapped onto N64 controller 1.
+// Minimal SDL input for the recompiled game: keyboard + game controllers (all connected,
+// or the one picked in Input > Controller) mapped onto N64 controller 1.
 //
 // Keyboard: arrows = stick, X = A, C = B, Z = Z (VRU talk button), A = L, S = R,
 //           Enter = Start, I/J/K/L = C-up/left/down/right, T/F/G/H = D-pad,
 //           Tab = word picker ("say" a word; Z is held automatically).
-// Controller: left stick = stick, A = A, B/X = B, left trigger = Z,
-//             LB = L, RB/right trigger = R, Start = Start, right stick = C buttons,
+// Controller: left stick = stick, A = A, B/X = B, LB or left trigger = Z (talk),
+//             Y = L, RB/right trigger = R, Start = Start, right stick = C buttons,
 //             D-pad = D-pad.
 #include <algorithm>
 #include <chrono>
@@ -24,6 +24,7 @@
 
 #include "hyp_control.h"
 #include "hyp_input.h"
+#include "hyp_menu.h"
 #include "hyp_vru.h"
 
 namespace {
@@ -39,50 +40,47 @@ namespace {
     constexpr float deadzone = 0.15f;
     constexpr float c_button_threshold = 0.5f;
 
-    SDL_GameController* controller = nullptr;
-    std::string controller_choice; // "" = first connected, "-" = keyboard only, else a controller name
+    // Open controllers. "Automatic" reads every connected controller at once: PCs often
+    // have virtual ones (AMD Link, Oculus, Steam) listed before the real pad, and
+    // picking only the first left the player's trigger unread.
+    std::vector<SDL_GameController*> controllers;
+    std::string controller_choice; // "" = all connected, "-" = keyboard only, else a controller name
     std::recursive_mutex controller_mutex; // the menu switches controllers on the window thread
 
-    // Open the controller matching the player's choice (window thread, under the lock).
+    // Open the controllers matching the player's choice (window thread, under the lock).
     void open_preferred_controller() {
-        if (controller != nullptr) {
-            SDL_GameControllerClose(controller);
-            controller = nullptr;
-        }
+        for (auto* c : controllers) SDL_GameControllerClose(c);
+        controllers.clear();
         if (controller_choice == "-") return;
+        std::string opened;
         for (int i = 0; i < SDL_NumJoysticks(); i++) {
             if (!SDL_IsGameController(i)) continue;
             const char* name = SDL_GameControllerNameForIndex(i);
             if (controller_choice.empty() || (name != nullptr && controller_choice == name)) {
-                controller = SDL_GameControllerOpen(i);
-                return;
+                if (SDL_GameController* c = SDL_GameControllerOpen(i)) {
+                    controllers.push_back(c);
+                    opened += (opened.empty() ? "" : ", ") + std::string(name != nullptr ? name : "Controller");
+                }
+                if (!controller_choice.empty()) break;
             }
         }
+        hyp::vru::voice_log("[input] reading controllers: %s\n", opened.empty() ? "(none)" : opened.c_str());
     }
 
-    float axis(SDL_GameControllerAxis a) {
-        float v = SDL_GameControllerGetAxis(controller, a) / 32767.0f;
+    float axis(SDL_GameController* c, SDL_GameControllerAxis a) {
+        float v = SDL_GameControllerGetAxis(c, a) / 32767.0f;
         return std::abs(v) < deadzone ? 0.0f : std::clamp(v, -1.0f, 1.0f);
     }
 
-    bool button(SDL_GameControllerButton b) {
-        return SDL_GameControllerGetButton(controller, b) != 0;
+    bool button(SDL_GameController* c, SDL_GameControllerButton b) {
+        return SDL_GameControllerGetButton(c, b) != 0;
     }
 }
 
 void hyp::input::handle_controller_event(const SDL_Event& event) {
     std::lock_guard lock{ controller_mutex };
-    if (event.type == SDL_CONTROLLERDEVICEADDED && controller == nullptr) {
-        open_preferred_controller();
-        const char* name = controller != nullptr ? SDL_GameControllerName(controller) : nullptr;
-        if (name != nullptr) hyp::vru::voice_log("[input] controller connected: %s\n", name);
-    }
-    else if (event.type == SDL_CONTROLLERDEVICEREMOVED && controller != nullptr &&
-             event.cdevice.which == SDL_JoystickInstanceID(SDL_GameControllerGetJoystick(controller))) {
-        SDL_GameControllerClose(controller);
-        controller = nullptr;
-        hyp::vru::voice_log("[input] controller disconnected\n");
-        open_preferred_controller(); // fall back to another connected controller, if any
+    if (event.type == SDL_CONTROLLERDEVICEADDED || event.type == SDL_CONTROLLERDEVICEREMOVED) {
+        open_preferred_controller(); // re-open the set of controllers for the current choice
     }
 }
 
@@ -104,8 +102,12 @@ void hyp::input::select_controller(const std::string& choice) {
 
 std::string hyp::input::active_controller_name() {
     std::lock_guard lock{ controller_mutex };
-    const char* name = controller != nullptr ? SDL_GameControllerName(controller) : nullptr;
-    return name != nullptr ? name : "";
+    std::string names;
+    for (auto* c : controllers) {
+        const char* name = SDL_GameControllerName(c);
+        names += (names.empty() ? "" : ", ") + std::string(name != nullptr ? name : "Controller");
+    }
+    return names;
 }
 
 void hyp::input::poll_inputs() {
@@ -135,31 +137,32 @@ bool hyp::input::get_n64_input(int controller_num, uint16_t* buttons, float* x, 
 
     bool keyboard_z = keys[SDL_SCANCODE_Z] != 0, pad_z = false;
     std::unique_lock controller_lock{ controller_mutex };
-    if (controller != nullptr) {
+    for (SDL_GameController* controller : controllers) {
         struct { SDL_GameControllerButton btn; uint16_t bit; } pad_map[] = {
             { SDL_CONTROLLER_BUTTON_A, N64_A }, { SDL_CONTROLLER_BUTTON_B, N64_B }, { SDL_CONTROLLER_BUTTON_X, N64_B },
-            { SDL_CONTROLLER_BUTTON_LEFTSHOULDER, N64_L }, { SDL_CONTROLLER_BUTTON_RIGHTSHOULDER, N64_R },
+            { SDL_CONTROLLER_BUTTON_Y, N64_L }, { SDL_CONTROLLER_BUTTON_RIGHTSHOULDER, N64_R },
             { SDL_CONTROLLER_BUTTON_START, N64_START },
             { SDL_CONTROLLER_BUTTON_DPAD_UP, N64_DU }, { SDL_CONTROLLER_BUTTON_DPAD_DOWN, N64_DD },
             { SDL_CONTROLLER_BUTTON_DPAD_LEFT, N64_DL }, { SDL_CONTROLLER_BUTTON_DPAD_RIGHT, N64_DR },
         };
         for (const auto& m : pad_map) {
-            if (button(m.btn)) b |= m.bit;
+            if (button(controller, m.btn)) b |= m.bit;
         }
-        if (axis(SDL_CONTROLLER_AXIS_TRIGGERLEFT) > c_button_threshold) {
+        if (axis(controller, SDL_CONTROLLER_AXIS_TRIGGERLEFT) > c_button_threshold ||
+            button(controller, SDL_CONTROLLER_BUTTON_LEFTSHOULDER)) {
             b |= N64_Z;
             pad_z = true;
         }
-        if (axis(SDL_CONTROLLER_AXIS_TRIGGERRIGHT) > c_button_threshold) b |= N64_R;
+        if (axis(controller, SDL_CONTROLLER_AXIS_TRIGGERRIGHT) > c_button_threshold) b |= N64_R;
 
-        float rx = axis(SDL_CONTROLLER_AXIS_RIGHTX), ry = axis(SDL_CONTROLLER_AXIS_RIGHTY);
+        float rx = axis(controller, SDL_CONTROLLER_AXIS_RIGHTX), ry = axis(controller, SDL_CONTROLLER_AXIS_RIGHTY);
         if (rx > c_button_threshold) b |= N64_CR;
         if (rx < -c_button_threshold) b |= N64_CL;
         if (ry > c_button_threshold) b |= N64_CD;
         if (ry < -c_button_threshold) b |= N64_CU;
 
-        float lx = axis(SDL_CONTROLLER_AXIS_LEFTX), ly = -axis(SDL_CONTROLLER_AXIS_LEFTY);
-        if (lx != 0.0f || ly != 0.0f) {
+        float lx = axis(controller, SDL_CONTROLLER_AXIS_LEFTX), ly = -axis(controller, SDL_CONTROLLER_AXIS_LEFTY);
+        if (std::abs(lx) + std::abs(ly) > std::abs(sx) + std::abs(sy)) { // strongest stick wins
             sx = lx;
             sy = ly;
         }
@@ -218,7 +221,14 @@ bool hyp::input::get_n64_input(int controller_num, uint16_t* buttons, float* x, 
         static bool was_z = false, warned_focus = false;
         bool z = (b & N64_Z) != 0;
         if (z && !was_z) {
-            hyp::vru::voice_log("[input] Z pressed (%s)\n", keyboard_z ? "keyboard" : pad_z ? "controller trigger" : "test input");
+#ifdef _WIN32
+            bool focused = hyp::menu::native_window() != nullptr && GetForegroundWindow() == (HWND)hyp::menu::native_window();
+#else
+            bool focused = true;
+#endif
+            hyp::vru::voice_log("[input] Z pressed (%s, game window %s)\n",
+                                keyboard_z ? "keyboard" : pad_z ? "controller LB/LT" : "test input",
+                                focused ? "focused" : "NOT focused");
         }
         was_z = z;
 #ifdef _WIN32
@@ -251,9 +261,8 @@ bool hyp::input::get_n64_input(int controller_num, uint16_t* buttons, float* x, 
 
 void hyp::input::set_rumble(int controller_num, bool rumble) {
     std::lock_guard lock{ controller_mutex };
-    if (controller_num == 0 && controller != nullptr) {
-        SDL_GameControllerRumble(controller, rumble ? 0xFFFF : 0, rumble ? 0xFFFF : 0, rumble ? 1000 : 0);
-    }
+    if (controller_num != 0) return;
+    for (auto* c : controllers) SDL_GameControllerRumble(c, rumble ? 0xFFFF : 0, rumble ? 0xFFFF : 0, rumble ? 1000 : 0);
 }
 
 ultramodern::input::connected_device_info_t hyp::input::get_connected_device_info(int controller_num) {
