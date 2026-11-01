@@ -15,6 +15,7 @@
 
 #include "hyp_asr.h"
 #include "hyp_control.h"
+#include "hyp_render.h"
 #include "hyp_motion.h"
 #include "hyp_vru.h"
 
@@ -98,6 +99,13 @@ namespace {
             std::string on;
             in >> on;
             hyp::motion::set_repeat(on == "on");
+        } else if (cmd == "snapshot") {
+            std::string path; std::getline(in >> std::ws, path);
+            hyp::renderer::request_snapshot(path);
+        } else if (cmd == "capture") {
+            int tasks = 0; std::string path;
+            in >> tasks; std::getline(in >> std::ws, path);
+            hyp::renderer::request_matrix_capture(path, tasks);
         } else if (cmd == "save") {
             save_requested = true;
         } else if (cmd == "shot") {

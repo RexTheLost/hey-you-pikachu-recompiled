@@ -11,6 +11,8 @@
 //   speak <file.wav>                 press Z and use the clip as the microphone utterance
 //   action <id> / motion <id>        make Pikachu play an action / motion
 //   repeat on|off                    keep replaying it
+//   snapshot <path>                  RDRAM + display list address of the next frame (ripping)
+//   capture <tasks> <path>           every G_MTX of the next <tasks> display lists (ripping)
 //   save                             run the game's own save routine (game thread)
 //   shot <file.png>                  screenshot of the game window
 //   quit

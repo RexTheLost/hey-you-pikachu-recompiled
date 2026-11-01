@@ -5,6 +5,8 @@
 #include <cstring>
 #include <cassert>
 #include <cstdio>
+#include <mutex>
+#include <string>
 #include <cstdlib>
 #include <algorithm>
 
@@ -328,7 +330,93 @@ static void dump_display_list(const uint8_t* rdram, uint32_t dl_addr, uint32_t t
     std::fflush(dl_dump_file);
 }
 
+// ---- ripping aids ----
+static std::mutex capture_mutex;
+static std::string snapshot_path;
+static std::string capture_path;
+static int capture_tasks_left = 0;
+static FILE* capture_file = nullptr;
+
+void hyp::renderer::request_snapshot(const std::string& path) {
+    std::lock_guard lock{ capture_mutex };
+    snapshot_path = path;
+}
+
+void hyp::renderer::request_matrix_capture(const std::string& path, int tasks) {
+    std::lock_guard lock{ capture_mutex };
+    capture_path = path;
+    capture_tasks_left = tasks;
+}
+
+// One task's G_MTX loads: "M <task> <mtx addr> <16 floats>" then "D <task> <dl addr>" for
+// each display list called while that matrix is current.
+static void capture_matrices(const uint8_t* rdram, uint32_t dl_addr, uint32_t task_index) {
+    uint32_t segments[16] = {};
+    uint32_t stack[18];
+    int depth = 0;
+    uint32_t pc = dl_addr & 0x3FFFFFF;
+    auto word = [rdram](uint32_t addr) { return *reinterpret_cast<const uint32_t*>(rdram + (addr & 0x3FFFFFC)); };
+    auto resolve = [&segments](uint32_t addr) {
+        return (addr & 0x80000000) ? (addr & 0x3FFFFFF) : ((segments[(addr >> 24) & 0xF] + (addr & 0xFFFFFF)) & 0x3FFFFFF);
+    };
+    for (int n = 0; n < 200000; n++) {
+        uint32_t w0 = word(pc), w1 = word(pc + 4);
+        uint8_t op = w0 >> 24;
+        pc += 8;
+        if (op == 0xDA) {
+            uint32_t m = resolve(w1);
+            std::fprintf(capture_file, "M %u %08X", task_index, m);
+            for (int i = 0; i < 16; i++) {
+                uint32_t iw = word(m + (i / 2) * 4), fw = word(m + 32 + (i / 2) * 4);
+                int16_t ip = (int16_t)((i & 1) ? (iw & 0xFFFF) : (iw >> 16));
+                uint16_t fp = (uint16_t)((i & 1) ? (fw & 0xFFFF) : (fw >> 16));
+                std::fprintf(capture_file, " %.6f", ip + fp / 65536.0);
+            }
+            std::fprintf(capture_file, "\n");
+        } else if (op == 0xDB && ((w0 >> 16) & 0xFF) == 0x06) {
+            segments[((w0 & 0xFFFF) / 4) & 0xF] = w1 & 0x3FFFFFF;
+        } else if (op == 0xDE) {
+            uint32_t target = resolve(w1);
+            if (depth == 0 || depth == 1) std::fprintf(capture_file, "D %u %08X %08X\n", task_index, target, w1);
+            if (((w0 >> 16) & 0xFF) == 0 && depth < 17) stack[depth++] = pc;
+            pc = target;
+        } else if (op == 0xDF) {
+            if (depth == 0) break;
+            pc = stack[--depth];
+        }
+    }
+}
+
+static void run_captures(const uint8_t* rdram, uint32_t dl_addr, uint32_t task_index) {
+    std::lock_guard lock{ capture_mutex };
+    if (!snapshot_path.empty()) {
+        if (FILE* f = std::fopen((snapshot_path + ".rdram").c_str(), "wb")) {
+            std::fwrite(rdram, 1, 0x800000, f);
+            std::fclose(f);
+        }
+        if (FILE* f = std::fopen((snapshot_path + ".txt").c_str(), "w")) {
+            std::fprintf(f, "dl=%08X task=%u\n", dl_addr, task_index);
+            std::fclose(f);
+        }
+        std::printf("[rip] snapshot %s (dl %08X)\n", snapshot_path.c_str(), dl_addr);
+        snapshot_path.clear();
+    }
+    if (capture_tasks_left > 0) {
+        if (capture_file == nullptr) capture_file = std::fopen(capture_path.c_str(), "w");
+        if (capture_file != nullptr) {
+            std::fprintf(capture_file, "T %u %08X\n", task_index, dl_addr);
+            capture_matrices(rdram, dl_addr, task_index);
+        }
+        if (--capture_tasks_left == 0 && capture_file != nullptr) {
+            std::fclose(capture_file);
+            capture_file = nullptr;
+            std::printf("[rip] matrix capture done: %s\n", capture_path.c_str());
+        }
+    }
+}
+
 void hyp::renderer::RT64Context::send_dl(const OSTask* task) {
+    run_captures(app->core.RDRAM, task->t.data_ptr, dl_count);
     if (dl_count == 0 && std::getenv("HYP_DL_DUMP") != nullptr) {
         dl_dump_file = std::fopen(std::getenv("HYP_DL_DUMP"), "w");
     }
