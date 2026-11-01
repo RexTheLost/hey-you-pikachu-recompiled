@@ -305,3 +305,10 @@ Stability findings:
 - Starting an action is two steps: `func_8000EAF8` sets a blend into the motion's first pose (mode 3, ext+0xEC = -2 - action), then the game re-starts the action from the table (`func_8000EBA0`, mode 1) to play it. Raw motions therefore keep action 74's motion field borrowed until they end.
 - Scripted scenes (start-screen demo, morning TV/gate tutorial) drive Pikachu directly and still override it; free roam works.
 - HYP_CONTROL: `action <id>`, `motion <id>`, `repeat on|off`.
+
+## Model and animation ripping (tools/rip_capture.py, tools/rip_model.py)
+- Blender 4.5.14 LTS (portable) at `D:\AI	oolslender-4.5.14-windows-x64` (official mirror, sha256 checked).
+- `python tools/rip_capture.py <dir> 145=sit_down m103=sitting ...` runs the dev build to the title screen, takes a RAM snapshot (`pose.rdram` + root display list) and, per action (`<id>`) or raw motion (`m<id>`), waits for the motion to start and captures every matrix for its length (with Pikachu's matrix range `R` and object transform `O` per frame).
+- `python tools/rip_model.py <dir>/pose.rdram <out.glb> name=<capture.txt> ...` walks the frame's display list from the root and exports one skinned mesh: every vertex bound (weight 1) to the matrix slot it was loaded under (this also covers seam triangles between parts and the tail's in-list matrix chain), bones = Pikachu's matrix slots, bind pose = snapshot, animations = per-bone matrices made object-relative, 30 fps. Untextured parts take their light colors (Pikachu's yellow).
+- Pikachu: 28 bones, 760 triangles, 10 textures. First rip in `build/rip/pikachu_rip/` (glb, textures/*.png, open_in_blender.bat); not in git (game assets).
+- Caveats: the skeleton is flat (bones = matrix slots, no parent chain yet); the shadow is a bone; sleeping rotates the whole object so the shadow tilts. Writing edited animations back into the game needs the joint hierarchy (motion part ids 38-77) and a converter to the motion format.

@@ -405,6 +405,20 @@ static void run_captures(const uint8_t* rdram, uint32_t dl_addr, uint32_t task_i
         if (capture_file == nullptr) capture_file = std::fopen(capture_path.c_str(), "w");
         if (capture_file != nullptr) {
             std::fprintf(capture_file, "T %u %08X\n", task_index, dl_addr);
+            // Pikachu's object this frame: matrix buffer range and transform (scale,
+            // position, 3x3 rotation), so animations can be made object-relative.
+            auto word = [rdram](uint32_t addr) { return *reinterpret_cast<const uint32_t*>(rdram + (addr & 0x3FFFFFC)); };
+            auto flt = [&word](uint32_t addr) { uint32_t w = word(addr); float f; std::memcpy(&f, &w, 4); return f; };
+            uint32_t obj = word(0x000760A8);
+            if ((obj & 0xFF000000) == 0x80000000) {
+                uint32_t ext = word(obj + 0x54);
+                std::fprintf(capture_file, "R %u %08X %08X\n", task_index, word(obj + 0x3C) & 0x3FFFFFF, word(obj + 0x40) & 0x3FFFFFF);
+                std::fprintf(capture_file, "O %u", task_index);
+                for (int i = 0; i < 3; i++) std::fprintf(capture_file, " %.7g", flt(obj + i * 4));
+                for (int i = 0; i < 3; i++) std::fprintf(capture_file, " %.7g", flt(obj + 0x18 + i * 4));
+                for (int i = 0; i < 9; i++) std::fprintf(capture_file, " %.7g", flt(ext + 0x18 + i * 4));
+                std::fprintf(capture_file, "\n");
+            }
             capture_matrices(rdram, dl_addr, task_index);
         }
         if (--capture_tasks_left == 0 && capture_file != nullptr) {
