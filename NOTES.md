@@ -312,3 +312,62 @@ Stability findings:
 - `python tools/rip_model.py <dir>/pose.rdram <out.glb> name=<capture.txt> ...` walks the frame's display list from the root and exports one skinned mesh: every vertex bound (weight 1) to the matrix slot it was loaded under (this also covers seam triangles between parts and the tail's in-list matrix chain), bones = Pikachu's matrix slots, bind pose = snapshot, animations = per-bone matrices made object-relative, 30 fps. Untextured parts take their light colors (Pikachu's yellow).
 - Pikachu: 28 bones, 760 triangles, 10 textures. First rip in `build/rip/pikachu_rip/` (glb, textures/*.png, open_in_blender.bat); not in git (game assets).
 - Caveats: the skeleton is flat (bones = matrix slots, no parent chain yet); the shadow is a bone; sleeping rotates the whole object so the shadow tilts. Writing edited animations back into the game needs the joint hierarchy (motion part ids 38-77) and a converter to the motion format.
+
+## Model format (how Pikachu is stored and drawn) — 2026-11-07
+Found from the title-screen RAM snapshot (`build/rip/pose.rdram`), the ROM and `build/decomp_all.c`. Scripts used: `D:/AI/scratch/tmp/hyp/{dl_walk,find_blob,hier}.py` (scratch, not in git).
+
+### Model types and files (main data)
+- **Model type table** `0x80087FE0`, 0x54 bytes per type; index = object type (37 = Pikachu, same id as the motion skeleton root). Fields used by `modelsNew` (`func_8001E1C4`, debug strings `pre_modelsNew`, `aft_omHrcAlloc`, `aft_joSetJointTbl`):
+  - +0x00 joint hierarchy (root node), passed to `omHrcAlloc` (`func_800083C0`)
+  - +0x04 list of joint ids ending in -1 (Pikachu: 66, 71, 76, 53, 60 at `0x8007A428`; purpose not checked)
+  - +0x08 flag (calls `func_80016884` when set), +0x0C float (divided by +0x24 for `func_800369D4`)
+  - +0x10..+0x20 five floats scaled by the object scale into ext+0x1FC..0x20C (collision/size; not checked)
+  - +0x34 → ext+0x194; +0x38 **model file index**
+  - Pikachu: hierarchy `0x800797B0`, file 0
+- **Model file table** `0x800792A0`, 0x24 bytes per file: +0x04 packed flag (0 = raw, 1 = LH5 + fixups), +0x08/+0x0C ROM start/end, +0x10..+0x20 LH5 sub-ranges (passed to `func_8002D010`, which decompresses and applies the `{offset, value}` fixups).
+  - `func_8001E04C` loads a file once: it allocates `end - start` bytes from the heap at `0x800F2960` and DMAs it (`func_80037E14`); the loaded pointer is cached at `0x800B6BB8[file]`.
+  - **Pikachu = file 0: raw (not compressed), ROM `0x505090–0x511310` (0xC280 bytes).** On the title screen it sat at RAM `0x80246750`, byte-identical to ROM.
+
+### Pikachu's model file (segment 0x0A)
+The file is drawn as **segment 0x0A** (`gsSPSegment(10, file)`): every pointer inside is `0A00xxxx` = offset in the file, so the file needs no relocation.
+- `0x0000–0x3940`: textures. CI4/CI8 images, each followed by its RGBA16 palette (loaded with LOADBLOCK as 16-bit, palettes with LOADTLUT); 12 SETTIMGs.
+- `0x3940–0x8410`: per part, a vertex array and then that part's display list (first part: vertices `0x3940`, DL `0x3AE0`). 876 vertices, 752 triangles in the 19 part DLs.
+- `0x8410`: the **skin DL** (stitching triangles between parts and the tail chain). It loads matrices of other joints in the middle of the list through segment 7 (`DA… 07000xxx`, offset = joint slot × 0x40), then loads vertices under each one.
+- After that, up to `0xC280`: more DLs and textures (the face parts the head swaps; not mapped one by one).
+- **Vertices** are standard F3DEX2 `Vtx` (16 bytes): s16 x, y, z, flag, s16 s, t (10.5), then **normals** (s8 nx, ny, nz, alpha). The parts are lit.
+- **Display lists** are F3DEX2 as run by F3DAM: G_VTX up to 32 vertices per load (cache indices 0–31), G_TRI1/G_TRI2, plus **0x07 (G_QUAD)**, which is used as a second form of two triangles. Other ops: D9 geometry mode, E2/E3 othermode, FC combine, D7 texture, DB moveword, the tile/load ops (F0/F2/F3/F5/FD), DE/DF.
+  - **The colour of an untextured part comes from inline light colours**: each part DL starts `E7, D9 00230405, E2, FC …`, then `DB0A0000/04` (light 1), `DB0A0018/1C` (light 2) and `DB0A0030/34` (ambient), e.g. 665100 / 261E00 / 997900 for the body yellow. A new model can colour flat parts the same way, with no textures.
+  - Textured parts: G_TEXTURE (s.15 scales) plus the T scale at `G_MW_FOG+0x10` (see Status).
+
+### Joint hierarchy (main data `0x800797B0`, 57 nodes)
+Node = 0x38 bytes:
+```c
+struct Joint {          // big-endian, in main .data
+    f32 scale[3];       // 0x00
+    f32 rot[3];         // 0x0C degrees (rest pose)
+    f32 pos[3];         // 0x18 model units, relative to the parent
+    f32 radius;         // 0x24 (bounding size? modelsNew sets 80.0 on joints 45/47 for type 37)
+    Joint *next;        // 0x28 sibling
+    Joint *child;       // 0x2C first child
+    Gfx *dl;            // 0x30 0A00xxxx part DL in the model file, or 0
+    u16 id;             // 0x34 joint id (the motion "part id"), u16 pad
+};
+```
+- Root 37 has two subtrees (38… body/head/arms, 62… lower body/legs/tail, plus 109) and one sibling, **joint 122**, whose DL is the skin DL `0A008410`.
+- 20 joints have a part DL (39, 45, 47, 51, 52, 54, 58, 59, 61, 63, 67, 69, 70, 72, 74, 75, 77, 121 = head `0A0056C8`, plus 122 = skin). The other joints carry only transforms, e.g. the 41→55→56→57 chain before an arm's DL. Ids 101–121 are helper and attach points (head 121, effect points 116–119, …).
+- The motion part ids are these joint ids: motions write each joint's rotation and position channels (Animation system).
+- Each frame, the CPU walks the tree. For every joint with a DL it writes the joint's world matrix into the object's matrix buffer (obj+0x3C..0x40, 0x40 bytes per slot), and the object's display list emits:
+  `G_MTX(load, slot)`, `G_DL 0A00xxxx` (the part), `G_DL <per-frame material DL>` (0x8025F300 or 0x80252E80 on the title screen; built at run time, not decoded).
+- The head DL also calls a per-object **segment 6 table** (`06000000…18`, four branch DLs built at run time = the swappable eyes and mouth).
+- Skinning is rigid: each vertex belongs to the matrix it was loaded under. The skin DL is how meshes bend across joints (it reads several joints' matrices through segment 7). `tools/rip_model.py` exports exactly this: 28 matrix slots → 28 bones, weight 1 per vertex.
+
+### What a replacement model must provide (design, not built yet)
+1. A new file 0 blob in the same layout: textures, then vertex arrays and part DLs, then the skin DL, all addressed `0A00xxxx`.
+2. Part DLs for the same joints, with each part's vertices **in that joint's local space**: the game loads the joint's world matrix before the DL. Vertices that bend across two joints go in the skin DL, loading the other joint's matrix via `DA380003 07000<slot*0x40>`.
+3. The hierarchy's `dl` fields (main data) pointed at the new DLs, or the new DLs placed at the same offsets. Joint transforms can stay as they are, so the existing 231 motions keep working.
+4. The face table (segment 6) and the material DLs come from code. A new model either keeps calling segment 6 from its head DL (expressions keep working) or leaves it out.
+- Limits: 32 vertices per G_VTX; file size = the ROM range (a bigger file needs the file table end updated and must fit the heap at `0x800F2960`). F3DEX2 Vtx and lighting rules apply.
+- Injection options:
+  - (a) Patch a ROM copy at `0x505090` (same size, or move it to the free space after `0xF194A0` and update the file table and hierarchy pointers). The port's stored-ROM hash check would need a bypass.
+  - (b) **Recommended for the port:** a runtime hook in the model-file loader (`func_8001E04C` DMA) that copies an override file from `data/models/` into RAM instead. This leaves the user's ROM untouched.
+- Not done: the converter, an in-game test model, the material DLs and the face table. The goal moved to building an original voice-controlled pet game (see the shared session notes), so this part is paused.
