@@ -2,8 +2,8 @@
 # Pack build/android/libmain.so + SDL + the Java side (android/) into a signed APK without
 # Gradle: aapt2 (resources + manifest), javac + d8 (classes.dex), zipalign, apksigner.
 #   tools/package_android.sh        -> build/android/HeyYouPikachu.apk
-# The voice model (models/ggml-base.en.bin) goes in as an uncompressed asset; the app unpacks
-# it once. The ROM is never packed: the player picks their own copy on the phone.
+# The voice model is downloaded by the app on first start (HYP_APK_MODEL=1 packs it in as an
+# uncompressed asset instead). The ROM is never packed: the player picks their own copy.
 set -e
 SDK=${ANDROID_SDK:-D:/AI/tools/android-sdk}
 NDK=${ANDROID_NDK:-$SDK/ndk/28.1.13356709}
@@ -21,7 +21,8 @@ mkdir -p "$OUT/res" "$OUT/gen" "$OUT/classes" "$OUT/assets" "$OUT/lib/arm64-v8a"
 
 # Resources + manifest
 "$BT/aapt2.exe" compile --dir android/res -o "$OUT/res/res.zip"
-if [ -f "$MODEL" ]; then cp "$MODEL" "$OUT/assets/ggml-base.en.bin"; else echo "warning: no $MODEL (voice off)"; fi
+# HYP_APK_MODEL=1 packs the voice model in (a 150 MB APK); by default the app downloads it once.
+if [ "$HYP_APK_MODEL" = "1" ]; then cp "$MODEL" "$OUT/assets/ggml-base.en.bin"; fi
 "$BT/aapt2.exe" link -o "$OUT/base.apk" -I "$JAR" --manifest android/AndroidManifest.xml \
     --java "$OUT/gen" -A "$OUT/assets" -0 bin --min-sdk-version 26 --target-sdk-version 35 \
     "$OUT/res/res.zip"

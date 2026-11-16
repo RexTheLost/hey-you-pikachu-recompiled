@@ -23,7 +23,9 @@ Needs the Android SDK (`D:/AI/tools/android-sdk`: build-tools 36.1.0, platform 3
   - `LauncherActivity`: first start only: pick the ROM (Android file picker, copied to
     `files/baserom.us.z64`; the game validates it, keeps `files/data/hyp.n64.us.1.0.z64` and
     deletes the copy, a wrong file is deleted too so the next start asks again), unpack the
-    voice model from the APK's assets to `files/data/models/`, ask for the microphone.
+    voice model to `files/data/models/` (downloaded once from huggingface.co, SHA-1 checked, or
+    unpacked from the APK when built with `HYP_APK_MODEL=1`; Skip = use the word list), ask
+    for the microphone.
   - `HypActivity`: SDL's activity (loads `c++_shared`, `SDL2`, `main`) + the controls overlay.
   - `ControlsView`: on-screen N64 controller in the side bars of the 4:3 picture, multi-touch:
     stick, TALK (= Z, hold and speak), A, B, C buttons, L, R, Start, Words, Hide. Shows what
