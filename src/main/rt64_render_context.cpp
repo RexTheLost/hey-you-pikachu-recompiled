@@ -270,6 +270,7 @@ hyp::renderer::RT64Context::RT64Context(uint8_t* rdram, ultramodern::renderer::W
     setup_result = map_setup_result(app->setup(0));
 #endif
     chosen_api = map_graphics_api(app->chosenGraphicsAPI);
+    std::printf("[start] RT64 setup result %d (0 = ok)\n", (int)setup_result);
     if (setup_result != ultramodern::renderer::SetupResult::Success) {
         app = nullptr;
         return;

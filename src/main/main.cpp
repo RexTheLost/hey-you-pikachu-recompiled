@@ -47,6 +47,9 @@
 #include "hyp_vru.h"
 
 extern "C" void recomp_entrypoint(uint8_t* rdram, recomp_context* ctx);
+#ifdef __ANDROID__
+namespace hyp::android { void install_crash_report(const std::filesystem::path& data_dir); }
+#endif
 gpr get_entrypoint_address();
 
 extern RspUcodeFunc n_aspMain;
@@ -78,6 +81,7 @@ namespace {
     SDL_Window* window = nullptr;
 
     ultramodern::gfx_callbacks_t::gfx_data_t create_gfx() {
+        std::printf("[start] SDL video init\n");
         SDL_SetHint(SDL_HINT_WINDOWS_DPI_AWARENESS, "permonitorv2");
         SDL_SetHint(SDL_HINT_GAMECONTROLLER_USE_BUTTON_LABELS, "0");
         SDL_SetHint(SDL_HINT_JOYSTICK_ALLOW_BACKGROUND_EVENTS, "1");
@@ -109,6 +113,7 @@ namespace {
         SDL_SysWMinfo wm_info;
         SDL_VERSION(&wm_info.version);
         SDL_GetWindowWMInfo(window, &wm_info);
+        std::printf("[start] window %p created\n", (void*)window);
         hyp::menu::attach(window);
 #ifdef _WIN32
         return ultramodern::renderer::WindowHandle{ wm_info.info.win.window, GetCurrentThreadId() };
@@ -393,6 +398,7 @@ namespace {
     // would skip the VI thread's dummy-mode setup (it only runs while no game is
     // started) and leave the VI mode null until the game's first osViSetMode.
     void on_gfx_init() {
+        std::printf("[start] renderer up, starting the game\n");
         std::thread([] {
             ultramodern::sleep_milliseconds(100); // let a few VIs install the dummy mode
             recomp::start_game(game_id);
@@ -528,10 +534,15 @@ int main(int argc, char** argv) {
     // Saves, stored ROM, settings and config live next to the exe (kept off the system drive).
     std::filesystem::path data_dir = program_dir() / "data";
     std::filesystem::create_directories(data_dir);
+#ifdef __ANDROID__
+    hyp::android::install_crash_report(data_dir);
+#endif
     hyp::settings::load(data_dir);
 
+    std::printf("[start] settings loaded, opening audio\n");
     SDL_InitSubSystem(SDL_INIT_AUDIO);
     reset_audio(48000);
+    std::printf("[start] audio open\n");
     {
         const auto& s = hyp::settings::get();
         hyp::audio::set_volume(s.muted ? 0.0f : s.volume / 100.0f);
@@ -542,6 +553,7 @@ int main(int argc, char** argv) {
     // (~174/s at 32 kHz), not one per video frame: pace AI events by buffer consumption.
     ultramodern::set_ai_buffer_pacing(true, 40);
 
+    std::printf("[start] checking the ROM\n");
     recomp::register_config_path(data_dir);
 
     recomp::GameEntry game{
@@ -602,6 +614,7 @@ int main(int argc, char** argv) {
         }
     }
 
+    std::printf("[start] ROM ok, starting the runtime\n");
     recomp::rsp::callbacks_t rsp_callbacks{
         .get_rsp_microcode = get_rsp_microcode,
     };

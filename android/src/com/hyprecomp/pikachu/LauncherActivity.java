@@ -2,6 +2,8 @@ package com.hyprecomp.pikachu;
 
 import android.Manifest;
 import android.app.Activity;
+import android.content.ClipData;
+import android.content.ClipboardManager;
 import android.content.Intent;
 import android.content.pm.PackageManager;
 import android.graphics.Color;
@@ -11,12 +13,19 @@ import android.view.Gravity;
 import android.view.View;
 import android.widget.Button;
 import android.widget.LinearLayout;
+import android.widget.ScrollView;
 import android.widget.TextView;
 
 import java.io.File;
 import java.io.FileInputStream;
 import java.io.FileOutputStream;
+import java.io.BufferedInputStream;
 import java.io.InputStream;
+import java.nio.charset.StandardCharsets;
+import java.nio.file.Files;
+import java.util.List;
+import java.util.zip.ZipEntry;
+import java.util.zip.ZipInputStream;
 import java.io.OutputStream;
 import java.net.HttpURLConnection;
 import java.net.URL;
@@ -79,7 +88,74 @@ public class LauncherActivity extends Activity {
         });
         box.addView(skip);
         setContentView(box);
-        next();
+        if (file(CRASH).exists()) showCrash();
+        else next();
+    }
+
+    static final String CRASH = "data/crash.txt", LOG = "data/log.txt";
+
+    /** The game crashed last time: show the report (crash.txt + the end of log.txt) to copy. */
+    private void showCrash() {
+        StringBuilder r = new StringBuilder();
+        r.append("Pikachu Android crash report (version ").append(versionName()).append(", Android ")
+            .append(android.os.Build.VERSION.RELEASE).append(", ").append(android.os.Build.MODEL).append(")\n\n");
+        r.append(readText(file(CRASH), 12000));
+        r.append("\n--- log ---\n").append(readText(file(LOG), 6000));
+        final String report = r.toString();
+        LinearLayout box = new LinearLayout(this);
+        box.setOrientation(LinearLayout.VERTICAL);
+        box.setBackgroundColor(Color.rgb(250, 214, 60));
+        box.setPadding(32, 24, 32, 24);
+        TextView head = new TextView(this);
+        head.setText("The game crashed last time. Tap Copy report and paste it to Claude.");
+        head.setTextSize(18);
+        head.setTextColor(Color.rgb(60, 40, 10));
+        box.addView(head);
+        LinearLayout row = new LinearLayout(this);
+        Button copy = new Button(this);
+        copy.setText("Copy report");
+        copy.setOnClickListener(v -> {
+            ClipboardManager cm = (ClipboardManager) getSystemService(CLIPBOARD_SERVICE);
+            cm.setPrimaryClip(ClipData.newPlainText("crash report", report));
+            head.setText("Copied. Paste it into the chat.");
+        });
+        row.addView(copy);
+        Button go = new Button(this);
+        go.setText("Start the game");
+        go.setOnClickListener(v -> {
+            file(CRASH).renameTo(file("data/crash_last.txt"));
+            recreate();
+        });
+        row.addView(go);
+        box.addView(row);
+        ScrollView sv = new ScrollView(this);
+        TextView body = new TextView(this);
+        body.setText(report);
+        body.setTextSize(11);
+        body.setTypeface(android.graphics.Typeface.MONOSPACE);
+        body.setTextColor(Color.rgb(30, 20, 5));
+        body.setTextIsSelectable(true);
+        sv.addView(body);
+        box.addView(sv);
+        setContentView(box);
+    }
+
+    private String versionName() {
+        try {
+            return getPackageManager().getPackageInfo(getPackageName(), 0).versionName;
+        } catch (Exception e) {
+            return "?";
+        }
+    }
+
+    /** The last maxChars characters of a text file ("" if missing). */
+    static String readText(File f, int maxChars) {
+        try {
+            String t = new String(Files.readAllBytes(f.toPath()), StandardCharsets.UTF_8);
+            return t.length() > maxChars ? "..." + t.substring(t.length() - maxChars) : t;
+        } catch (Exception e) {
+            return "(no " + f.getName() + ")\n";
+        }
     }
 
     private File file(String name) {
@@ -90,7 +166,7 @@ public class LauncherActivity extends Activity {
     private void next() {
         if (!file(STORED_ROM).exists() && !file("baserom.us.z64").exists()) {
             text.setText("This app runs your own copy of Hey You, Pikachu! (USA, N64).\n"
-                + "Choose the .z64 / .n64 / .v64 file. It is copied into the app once.");
+                + "Choose the .z64 / .n64 / .v64 file (or a .zip with it inside). It is copied into the app once.");
             pick.setVisibility(View.VISIBLE);
             return;
         }
@@ -143,9 +219,24 @@ public class LauncherActivity extends Activity {
         }).start();
     }
 
+    /** Copy the picked file; a .zip is opened and the first .z64/.n64/.v64 inside is used. */
     private String copy(Uri uri, File out) {
-        try (InputStream in = getContentResolver().openInputStream(uri);
+        try (InputStream raw = new BufferedInputStream(getContentResolver().openInputStream(uri));
              OutputStream os = new FileOutputStream(out)) {
+            InputStream in = raw;
+            raw.mark(4);
+            boolean zip = raw.read() == 'P' && raw.read() == 'K';
+            raw.reset();
+            if (zip) {
+                ZipInputStream z = new ZipInputStream(raw);
+                ZipEntry e;
+                while ((e = z.getNextEntry()) != null) {
+                    String n = e.getName().toLowerCase();
+                    if (!e.isDirectory() && (n.endsWith(".z64") || n.endsWith(".n64") || n.endsWith(".v64"))) break;
+                }
+                if (e == null) throw new Exception("there is no .z64 / .n64 / .v64 file in that zip");
+                in = z;
+            }
             byte[] buf = new byte[1 << 16];
             long total = 0;
             for (int n; (n = in.read(buf)) > 0; ) {

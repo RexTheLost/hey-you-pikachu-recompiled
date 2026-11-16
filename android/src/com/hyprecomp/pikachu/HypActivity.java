@@ -24,6 +24,16 @@ public class HypActivity extends SDLActivity {
 
     @Override
     protected void onCreate(Bundle state) {
+        // A Java crash in the game screen goes into the same report as native ones.
+        final Thread.UncaughtExceptionHandler old = Thread.getDefaultUncaughtExceptionHandler();
+        Thread.setDefaultUncaughtExceptionHandler((t, e) -> {
+            try (java.io.PrintWriter w = new java.io.PrintWriter(new java.io.FileWriter(
+                    new java.io.File(getFilesDir(), LauncherActivity.CRASH), true))) {
+                w.println("Java exception in thread " + t.getName() + ":");
+                e.printStackTrace(w);
+            } catch (Exception ignored) { }
+            if (old != null) old.uncaughtException(t, e);
+        });
         super.onCreate(state);
         if (mBrokenLibraries || mLayout == null) return;
         controls = new ControlsView(this);
