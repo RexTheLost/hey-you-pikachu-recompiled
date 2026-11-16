@@ -28,6 +28,18 @@ endif()
 set(CMAKE_LIBRARY_OUTPUT_DIRECTORY ${CMAKE_BINARY_DIR})
 set(CMAKE_RUNTIME_OUTPUT_DIRECTORY ${CMAKE_BINARY_DIR})
 
+if (ANDROID)
+    # Android (arm64, built with the NDK from tools/build_android.sh): SDL2 from source,
+    # the game becomes libmain.so, loaded by SDL's Java activity (android/).
+    set(SDL_SHARED ON CACHE BOOL "" FORCE)
+    set(SDL_STATIC OFF CACHE BOOL "" FORCE)
+    set(SDL_TEST OFF CACHE BOOL "" FORCE)
+    add_subdirectory(${CMAKE_SOURCE_DIR}/android/third_party/SDL2 ${CMAKE_BINARY_DIR}/SDL2)
+    set(HYP_SDL2_INCLUDE ${CMAKE_SOURCE_DIR}/android/third_party/SDL2/include)
+    include_directories(${HYP_SDL2_INCLUDE})
+    set(RT64_SDL2_INCLUDE_DIRS ${HYP_SDL2_INCLUDE} CACHE STRING "" FORCE)
+endif()
+
 set(RT64_STATIC TRUE)
 set(RT64_SDL_WINDOW_VULKAN TRUE)
 add_compile_definitions(HLSL_CPU)
@@ -39,6 +51,11 @@ add_subdirectory(${CMAKE_SOURCE_DIR}/lib/N64ModernRuntime)
 # Portable CPU build (AVX2/FMA/F16C, i.e. Haswell or newer), static, no extras.
 set(GGML_NATIVE OFF CACHE BOOL "" FORCE)
 set(GGML_CCACHE OFF CACHE BOOL "" FORCE)
+if (ANDROID)
+    set(GGML_OPENMP OFF CACHE BOOL "" FORCE)
+    # Every arm64 phone from ~2018 on (the S24 FE included) has dot product + fp16 math.
+    set(GGML_CPU_ARM_ARCH "armv8.2-a+dotprod+fp16" CACHE STRING "" FORCE)
+endif()
 set(BUILD_SHARED_LIBS OFF CACHE BOOL "" FORCE)
 set(WHISPER_BUILD_TESTS OFF CACHE BOOL "" FORCE)
 set(WHISPER_BUILD_EXAMPLES OFF CACHE BOOL "" FORCE)
@@ -68,10 +85,20 @@ file(GLOB FUNC_C_SOURCES ${CMAKE_SOURCE_DIR}/RecompiledFuncs/*.c)
 file(GLOB FUNC_CXX_SOURCES ${CMAKE_SOURCE_DIR}/RecompiledFuncs/*.cpp)
 target_sources(RecompiledFuncs PRIVATE ${FUNC_C_SOURCES} ${FUNC_CXX_SOURCES})
 
-add_executable(HeyYouPikachuRecompiled)
+if (ANDROID)
+    add_library(HeyYouPikachuRecompiled SHARED)
+    set_target_properties(HeyYouPikachuRecompiled PROPERTIES OUTPUT_NAME main)
+    target_sources(HeyYouPikachuRecompiled PRIVATE ${CMAKE_SOURCE_DIR}/src/android/android_glue.cpp)
+    target_link_libraries(HeyYouPikachuRecompiled PRIVATE SDL2 android log)
+    target_compile_definitions(HeyYouPikachuRecompiled PRIVATE RT64_SDL_WINDOW_VULKAN)
+else()
+    add_executable(HeyYouPikachuRecompiled)
+endif()
 target_sources(HeyYouPikachuRecompiled PRIVATE
     ${CMAKE_SOURCE_DIR}/src/main/main.cpp
     ${CMAKE_SOURCE_DIR}/src/main/menu.cpp
+    ${CMAKE_SOURCE_DIR}/src/motion_player_window.cpp
+    ${CMAKE_SOURCE_DIR}/src/vru/vru_picker.cpp
     ${CMAKE_SOURCE_DIR}/src/main/register_overlays.cpp
     ${CMAKE_SOURCE_DIR}/src/main/rt64_render_context.cpp
     ${CMAKE_SOURCE_DIR}/src/game/input.cpp
@@ -79,9 +106,9 @@ target_sources(HeyYouPikachuRecompiled PRIVATE
     ${CMAKE_SOURCE_DIR}/src/debug_trace.cpp
     ${CMAKE_SOURCE_DIR}/src/debug_control.cpp
     ${CMAKE_SOURCE_DIR}/src/settings.cpp
+    ${CMAKE_SOURCE_DIR}/src/motion_player.cpp
     ${CMAKE_SOURCE_DIR}/src/overlay_hooks.cpp
     ${CMAKE_SOURCE_DIR}/src/vru/vru.cpp
-    ${CMAKE_SOURCE_DIR}/src/vru/vru_picker.cpp
     ${CMAKE_SOURCE_DIR}/src/vru/vru_mic.cpp
     ${CMAKE_SOURCE_DIR}/src/vru/asr.cpp
     ${CMAKE_SOURCE_DIR}/rsp/n_aspMain.cpp
@@ -136,6 +163,8 @@ target_link_libraries(HeyYouPikachuRecompiled PRIVATE
 )
 
 # Recognizer test tool: asr_test <model.bin> <16-bit wav> "word one" "word two" ...
-add_executable(asr_test ${CMAKE_SOURCE_DIR}/src/vru/asr_test.cpp ${CMAKE_SOURCE_DIR}/src/vru/asr.cpp)
-target_include_directories(asr_test PRIVATE ${CMAKE_SOURCE_DIR}/include)
-target_link_libraries(asr_test PRIVATE whisper)
+if (NOT ANDROID)
+    add_executable(asr_test ${CMAKE_SOURCE_DIR}/src/vru/asr_test.cpp ${CMAKE_SOURCE_DIR}/src/vru/asr.cpp)
+    target_include_directories(asr_test PRIVATE ${CMAKE_SOURCE_DIR}/include)
+    target_link_libraries(asr_test PRIVATE whisper)
+endif()

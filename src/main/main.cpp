@@ -65,6 +65,9 @@ namespace {
         wchar_t buf[MAX_PATH];
         GetModuleFileNameW(nullptr, buf, MAX_PATH);
         return std::filesystem::path(buf).parent_path();
+#elif defined(__ANDROID__)
+        // The app's private storage (the Java side puts the ROM and the voice model there).
+        return std::filesystem::path(SDL_AndroidGetInternalStoragePath());
 #else
         return std::filesystem::current_path();
 #endif
@@ -78,6 +81,9 @@ namespace {
         SDL_SetHint(SDL_HINT_WINDOWS_DPI_AWARENESS, "permonitorv2");
         SDL_SetHint(SDL_HINT_GAMECONTROLLER_USE_BUTTON_LABELS, "0");
         SDL_SetHint(SDL_HINT_JOYSTICK_ALLOW_BACKGROUND_EVENTS, "1");
+        SDL_SetHint(SDL_HINT_ORIENTATIONS, "LandscapeLeft LandscapeRight");
+        SDL_SetHint(SDL_HINT_ANDROID_BLOCK_ON_PAUSE, "1");
+        SDL_SetHint(SDL_HINT_ANDROID_TRAP_BACK_BUTTON, "1"); // a stray back swipe must not close the game
         if (SDL_Init(SDL_INIT_VIDEO | SDL_INIT_GAMECONTROLLER) != 0) {
             exit_error(SDL_GetError());
         }
@@ -86,6 +92,12 @@ namespace {
 
     ultramodern::renderer::WindowHandle create_window(ultramodern::gfx_callbacks_t::gfx_data_t) {
         uint32_t flags = SDL_WINDOW_RESIZABLE;
+#ifndef _WIN32
+        flags |= SDL_WINDOW_VULKAN; // RT64 makes its Vulkan surface from the SDL window
+#endif
+#ifdef __ANDROID__
+        flags |= SDL_WINDOW_FULLSCREEN;
+#endif
         if (std::getenv("HYP_ON_TOP") != nullptr) {
             flags |= SDL_WINDOW_ALWAYS_ON_TOP; // test runs: keep the window capturable
         }
@@ -98,7 +110,11 @@ namespace {
         SDL_VERSION(&wm_info.version);
         SDL_GetWindowWMInfo(window, &wm_info);
         hyp::menu::attach(window);
+#ifdef _WIN32
         return ultramodern::renderer::WindowHandle{ wm_info.info.win.window, GetCurrentThreadId() };
+#else
+        return window;
+#endif
     }
 
     // Test aid: HYP_VRU_SAY="word@seconds[,word@seconds...]" says words at fixed
@@ -563,11 +579,22 @@ int main(int argc, char** argv) {
             rom_arg = file;
         }
 #endif
-        switch (recomp::select_rom(rom_arg, id)) {
+        auto rom_result = recomp::select_rom(rom_arg, id);
+#ifdef __ANDROID__
+        // The Java side copied the picked file to baserom.us.z64. The runtime keeps its own copy
+        // once the ROM is accepted, and a wrong file must not stay: the next start asks again.
+        std::error_code rom_ec;
+        std::filesystem::remove(rom_arg, rom_ec);
+#endif
+        switch (rom_result) {
             case recomp::RomValidationError::Good:
                 break;
             case recomp::RomValidationError::FailedToOpen:
+#ifdef __ANDROID__
+                exit_error("Could not open the ROM. Start the app again and choose your Hey You, Pikachu! (USA) file.");
+#else
                 exit_error("Could not open the ROM. Run with --rom \"<path to Hey You, Pikachu! (USA).z64>\".");
+#endif
             case recomp::RomValidationError::IncorrectVersion:
                 exit_error("This is a different version of Hey You, Pikachu!. Only the USA release is supported.");
             default:

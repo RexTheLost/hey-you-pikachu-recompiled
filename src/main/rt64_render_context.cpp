@@ -204,7 +204,11 @@ hyp::renderer::RT64Context::RT64Context(uint8_t* rdram, ultramodern::renderer::W
     static unsigned char dummy_rom_header[0x40];
 
     RT64::Application::Core appCore{};
+#ifdef _WIN32
     appCore.window = window_handle.window;
+#else
+    appCore.window = window_handle; // SDL_Window* (RT64_SDL_WINDOW_VULKAN)
+#endif
     appCore.checkInterrupts = dummy_check_interrupts;
 
     appCore.HEADER = dummy_rom_header;
@@ -260,7 +264,11 @@ hyp::renderer::RT64Context::RT64Context(uint8_t* rdram, ultramodern::renderer::W
             break;
     }
 
+#ifdef _WIN32
     setup_result = map_setup_result(app->setup(window_handle.thread_id));
+#else
+    setup_result = map_setup_result(app->setup(0));
+#endif
     chosen_api = map_graphics_api(app->chosenGraphicsAPI);
     if (setup_result != ultramodern::renderer::SetupResult::Success) {
         app = nullptr;

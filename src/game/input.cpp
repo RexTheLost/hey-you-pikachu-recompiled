@@ -25,6 +25,9 @@
 #include "hyp_control.h"
 #include "hyp_input.h"
 #include "hyp_menu.h"
+#ifdef __ANDROID__
+#include "hyp_touch.h"
+#endif
 #include "hyp_vru.h"
 
 namespace {
@@ -170,6 +173,24 @@ bool hyp::input::get_n64_input(int controller_num, uint16_t* buttons, float* x, 
 
     controller_lock.unlock();
 
+#ifdef __ANDROID__
+    // On-screen controls (Talk = Z). The stick wins when it is pushed further.
+    bool touch_z = false;
+    {
+        uint16_t tb = hyp::touch::buttons();
+        b |= tb;
+        touch_z = (tb & N64_Z) != 0;
+        float tx = 0.0f, ty = 0.0f;
+        hyp::touch::stick(&tx, &ty);
+        if (std::abs(tx) + std::abs(ty) > std::abs(sx) + std::abs(sy)) {
+            sx = tx;
+            sy = ty;
+        }
+    }
+#else
+    constexpr bool touch_z = false;
+#endif
+
     // Test aid: HYP_PRESS="start@8,a@12,z@20" taps buttons (0.25 s) at fixed times.
     {
         constexpr uint32_t STICK_UP = 0x10000, STICK_DOWN = 0x20000, STICK_LEFT = 0x40000, STICK_RIGHT = 0x80000;
@@ -227,7 +248,7 @@ bool hyp::input::get_n64_input(int controller_num, uint16_t* buttons, float* x, 
             bool focused = true;
 #endif
             hyp::vru::voice_log("[input] Z pressed (%s, game window %s)\n",
-                                keyboard_z ? "keyboard" : pad_z ? "controller LB/LT" : "test input",
+                                keyboard_z ? "keyboard" : pad_z ? "controller LB/LT" : touch_z ? "Talk button" : "test input",
                                 focused ? "focused" : "NOT focused");
         }
         was_z = z;

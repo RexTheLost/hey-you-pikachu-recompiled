@@ -1,0 +1,41 @@
+# Android port
+
+Same recompiled game, RT64 (Vulkan) and whisper.cpp as the PC build, packed as an APK for
+arm64 phones with Vulkan 1.1 (built for the user's Galaxy S24 FE).
+
+## Build (Windows host, Git Bash)
+
+1. Build the Windows version once (`tools\build.bat`): the Android build runs its
+   `build/win/file_to_c.exe` on the host to embed RT64's shaders.
+2. `tools/apply_patches.sh` (RT64 patch 0003 makes RT64 cross-compile for Android).
+3. `sh tools/build_android.sh` → `build/android/libmain.so` (NDK 28, arm64-v8a, API 26).
+4. `sh tools/package_android.sh` → `build/android/HeyYouPikachu.apk` (no Gradle: aapt2,
+   javac, d8, zipalign, apksigner with the Android debug key).
+
+Needs the Android SDK (`D:/AI/tools/android-sdk`: build-tools 36.1.0, platform 35, NDK
+28.1.13356709), JDK 21, cmake + ninja, and SDL2 2.30.3 source in `android/third_party/SDL2`
+(not in git; the official release zip, unpacked). Two local edits to that SDL copy:
+`src/sensor/android/SDL_androidsensor.c` uses `ALooper_pollOnce` (NDK 28 removed `pollAll`).
+
+## How it fits together
+
+- `android/src/com/hyprecomp/pikachu/`
+  - `LauncherActivity`: first start only: pick the ROM (Android file picker, copied to
+    `files/baserom.us.z64`; the game validates it, keeps `files/data/hyp.n64.us.1.0.z64` and
+    deletes the copy, a wrong file is deleted too so the next start asks again), unpack the
+    voice model from the APK's assets to `files/data/models/`, ask for the microphone.
+  - `HypActivity`: SDL's activity (loads `c++_shared`, `SDL2`, `main`) + the controls overlay.
+  - `ControlsView`: on-screen N64 controller in the side bars of the 4:3 picture, multi-touch:
+    stick, TALK (= Z, hold and speak), A, B, C buttons, L, R, Start, Words, Hide. Shows what
+    the mic heard. `HypNative` = the JNI calls (`src/android/android_glue.cpp`).
+  - Words: a list of the words the game listens for right now (grouped); tapping one says it.
+- Native: `program_dir()` is the app's files dir; graphics are set to 2x N64 resolution, 4:3,
+  no MSAA, high-precision framebuffer off (menu.cpp's non-Windows `attach`). whisper uses 4
+  threads (phones mix fast and slow cores) and armv8.2-a dotprod/fp16.
+- Back gesture is trapped (it would close the game); leave with Home.
+
+## Not verified yet
+
+Nothing has run on a phone: speed of RT64 on mobile GPUs, Vulkan feature support, the
+microphone path, pausing/resuming (the Vulkan surface is destroyed in the background),
+and whether controllers work (SDL supports Bluetooth/USB pads; untested).

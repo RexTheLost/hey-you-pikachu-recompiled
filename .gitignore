@@ -11,3 +11,4 @@ build/
 .venv/
 rsp/*.cpp
 models/
+android/third_party/

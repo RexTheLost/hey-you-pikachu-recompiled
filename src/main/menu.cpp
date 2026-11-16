@@ -451,7 +451,22 @@ void hyp::menu::show_controls() {
         L"Controls", MB_ICONINFORMATION);
 }
 #else
-void hyp::menu::attach(SDL_Window*) {}
+#include "ultramodern/config.hpp"
+// No menu bar here (Android): set the graphics options the Windows menu would apply.
+// 2x the N64 resolution (640x480) keeps phones fast; 4:3 picture with the controls beside it.
+void hyp::menu::attach(SDL_Window*) {
+    ultramodern::renderer::GraphicsConfig config = ultramodern::renderer::get_graphics_config();
+    config.res_option = ultramodern::renderer::Resolution::Original2x;
+    config.ar_option = ultramodern::renderer::AspectRatio::Original;
+    config.hr_option = ultramodern::renderer::HUDRatioMode::Original;
+    config.msaa_option = ultramodern::renderer::Antialiasing::None;
+    config.api_option = ultramodern::renderer::GraphicsApi::Auto;
+    config.rr_option = ultramodern::renderer::RefreshRate::Original;
+    config.hpfb_option = ultramodern::renderer::HighPrecisionFramebuffer::Off;
+    config.ds_option = 1;
+    config.wm_option = ultramodern::renderer::WindowMode::Windowed; // the SDL window is already full screen
+    ultramodern::renderer::set_graphics_config(config);
+}
 void hyp::menu::toggle_fullscreen() {}
 void* hyp::menu::native_window() { return nullptr; }
 void hyp::menu::show_controls() {}

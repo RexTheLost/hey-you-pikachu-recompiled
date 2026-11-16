@@ -210,7 +210,12 @@ hyp::asr::Result hyp::asr::recognize(const std::vector<float>& pcm, const std::v
         if (!prompt.empty()) prompt += ".";
 
         whisper_full_params params = whisper_full_default_params(WHISPER_SAMPLING_GREEDY);
+#ifdef __ANDROID__
+        // Phones mix fast and slow cores; more threads than fast cores slows whisper down.
+        params.n_threads = (int)std::clamp(std::thread::hardware_concurrency(), 1u, 4u);
+#else
         params.n_threads = (int)std::clamp(std::thread::hardware_concurrency(), 1u, 8u);
+#endif
         params.language = "en";
         params.translate = false;
         params.no_context = true;
