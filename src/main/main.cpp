@@ -80,6 +80,12 @@ namespace {
 
     SDL_Window* window = nullptr;
 
+#ifdef __ANDROID__
+    // App going to the background / coming back. Called on the thread that posts the event
+    // (Android's UI thread), right away: the event loop itself is blocked while paused.
+    int SDLCALL on_app_event(void*, SDL_Event* event);
+#endif
+
     ultramodern::gfx_callbacks_t::gfx_data_t create_gfx() {
         std::printf("[start] SDL video init\n");
         SDL_SetHint(SDL_HINT_WINDOWS_DPI_AWARENESS, "permonitorv2");
@@ -91,6 +97,9 @@ namespace {
         if (SDL_Init(SDL_INIT_VIDEO | SDL_INIT_GAMECONTROLLER) != 0) {
             exit_error(SDL_GetError());
         }
+#ifdef __ANDROID__
+        SDL_AddEventWatch(on_app_event, nullptr);
+#endif
         return {};
     }
 
@@ -366,6 +375,26 @@ namespace {
         return names;
     }
 }
+
+#ifdef __ANDROID__
+namespace {
+    int SDLCALL on_app_event(void*, SDL_Event* event) {
+        switch (event->type) {
+            case SDL_APP_WILLENTERBACKGROUND:
+                std::printf("[app] going to the background: game paused\n");
+                ultramodern::set_paused(true);
+                if (audio_device != 0) SDL_PauseAudioDevice(audio_device, 1);
+                break;
+            case SDL_APP_DIDENTERFOREGROUND:
+                std::printf("[app] back in the foreground: game resumed\n");
+                if (audio_device != 0) SDL_PauseAudioDevice(audio_device, 0);
+                ultramodern::set_paused(false);
+                break;
+        }
+        return 1;
+    }
+}
+#endif
 
 std::vector<std::string> hyp::audio::output_devices() { return audio_device_names(0); }
 std::vector<std::string> hyp::audio::input_devices() { return audio_device_names(1); }

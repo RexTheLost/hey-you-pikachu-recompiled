@@ -35,9 +35,14 @@ Needs the Android SDK (`D:/AI/tools/android-sdk`: build-tools 36.1.0, platform 3
   no MSAA, high-precision framebuffer off (menu.cpp's non-Windows `attach`). whisper uses 4
   threads (phones mix fast and slow cores) and armv8.2-a dotprod/fp16.
 - Back gesture is trapped (it would close the game); leave with Home.
+- Background: SDL's APP_WILLENTERBACKGROUND pauses the runtime (patch N64ModernRuntime/0003:
+  no VI/AI events, game clock shifted by the paused time) and the audio; on return RT64
+  rebuilds its Vulkan surface from SDL's new ANativeWindow (patch rt64/0003). If Android
+  kills the process in the background, the game still starts over (no save states).
+- Full screen: the game activity lays out under the system bars and the camera cutout, so
+  the 4:3 picture is the full screen height. Clock + battery are drawn top-left.
 
 ## Not verified yet
 
 Nothing has run on a phone: speed of RT64 on mobile GPUs, Vulkan feature support, the
-microphone path, pausing/resuming (the Vulkan surface is destroyed in the background),
-and whether controllers work (SDL supports Bluetooth/USB pads; untested).
+microphone path, and whether controllers work (SDL supports Bluetooth/USB pads; untested).

@@ -200,3 +200,111 @@ index e450855..2297421 100755
      enum class RenderTextureDimension {
          UNKNOWN,
          TEXTURE_1D,
+diff --git a/src/vulkan/rt64_vulkan.cpp b/src/vulkan/rt64_vulkan.cpp
+index c814269..fb02002 100644
+--- a/src/vulkan/rt64_vulkan.cpp
++++ b/src/vulkan/rt64_vulkan.cpp
+@@ -7,6 +7,14 @@
+ 
+ #include "rt64_vulkan.h"
+ 
++#if defined(__ANDROID__) && defined(RT64_SDL_WINDOW_VULKAN)
++#   include <SDL_syswm.h>
++#endif
++
++namespace RT64 {
++    void *androidNativeWindow(RenderWindow renderWindow);
++};
++
+ #include <algorithm>
+ #include <cmath>
+ #include <climits>
+@@ -1950,6 +1958,7 @@ namespace RT64 {
+             fprintf(stderr, "SDL_Vulkan_CreateSurface failed with error %s.\n", SDL_GetError());
+             return;
+         }
++        surfaceNativeWindow = androidNativeWindow(renderWindow);
+ #   elif defined(__ANDROID__)
+         assert(renderWindow != nullptr);
+         VkAndroidSurfaceCreateInfoKHR surfaceCreateInfo = {};
+@@ -2084,6 +2093,28 @@ namespace RT64 {
+         commandQueue->swapChains.insert(this);
+     }
+ 
++    // Android destroys the window surface while the app is in the background and makes a new
++    // one when it returns; SDL then holds a different ANativeWindow (or none in between).
++    // The Vulkan surface has to be rebuilt from the new one, or nothing is shown again.
++    void *androidNativeWindow(RenderWindow renderWindow) {
++#   if defined(__ANDROID__) && defined(RT64_SDL_WINDOW_VULKAN)
++        SDL_SysWMinfo info;
++        SDL_VERSION(&info.version);
++        if (SDL_GetWindowWMInfo(renderWindow, &info) == SDL_TRUE) {
++            return (void *)(info.info.android.window);
++        }
++#   endif
++        return nullptr;
++    }
++
++    bool VulkanSwapChain::surfaceStale() const {
++#   if defined(__ANDROID__) && defined(RT64_SDL_WINDOW_VULKAN)
++        return androidNativeWindow(renderWindow) != surfaceNativeWindow;
++#   else
++        return false;
++#   endif
++    }
++
+     VulkanSwapChain::~VulkanSwapChain() {
+         releaseImageViews();
+         releaseSwapChain();
+@@ -2162,6 +2193,29 @@ namespace RT64 {
+         // Destroy any image view references to the current swap chain.
+         releaseImageViews();
+ 
++#   if defined(__ANDROID__) && defined(RT64_SDL_WINDOW_VULKAN)
++        if (surfaceStale()) {
++            void *nativeWindow = androidNativeWindow(renderWindow);
++            releaseSwapChain();
++            VulkanInterface *renderInterface = commandQueue->device->renderInterface;
++            if (surface != VK_NULL_HANDLE) {
++                vkDestroySurfaceKHR(renderInterface->instance, surface, nullptr);
++                surface = VK_NULL_HANDLE;
++            }
++            surfaceNativeWindow = nullptr;
++            if (nativeWindow == nullptr) {
++                return false; // still in the background: try again on a later frame
++            }
++            if (SDL_Vulkan_CreateSurface(renderWindow, renderInterface->instance, &surface) == SDL_FALSE) {
++                fprintf(stderr, "SDL_Vulkan_CreateSurface (window came back) failed: %s\n", SDL_GetError());
++                surface = VK_NULL_HANDLE;
++                return false;
++            }
++            surfaceNativeWindow = nativeWindow;
++            fprintf(stderr, "RT64: window surface rebuilt after the app came back.\n");
++        }
++#   endif
++
+         // We don't actually need to query the surface capabilities but the validation layer seems to cache the valid extents from this call.
+         VkSurfaceCapabilitiesKHR surfaceCapabilities = {};
+         vkGetPhysicalDeviceSurfaceCapabilitiesKHR(commandQueue->device->physicalDevice, surface, &surfaceCapabilities);
+@@ -2238,7 +2292,7 @@ namespace RT64 {
+     bool VulkanSwapChain::needsResize() const {
+         uint32_t windowWidth, windowHeight;
+         getWindowSize(windowWidth, windowHeight);
+-        return (vk == VK_NULL_HANDLE) || (windowWidth != width) || (windowHeight != height) || (requiredPresentMode != createdPresentMode);
++        return (vk == VK_NULL_HANDLE) || (windowWidth != width) || (windowHeight != height) || (requiredPresentMode != createdPresentMode) || surfaceStale();
+     }
+ 
+     void VulkanSwapChain::setVsyncEnabled(bool vsyncEnabled) {
+diff --git a/src/vulkan/rt64_vulkan.h b/src/vulkan/rt64_vulkan.h
+index 293a580..a446c32 100644
+--- a/src/vulkan/rt64_vulkan.h
++++ b/src/vulkan/rt64_vulkan.h
+@@ -223,6 +223,8 @@ namespace RT64 {
+         std::vector<VulkanTexture> textures;
+         uint64_t currentPresentId = 0;
+         bool immediatePresentModeSupported = false;
++        void *surfaceNativeWindow = nullptr; // Android: the ANativeWindow the surface was made from
++        bool surfaceStale() const;
+ 
+         VulkanSwapChain(VulkanCommandQueue *commandQueue, RenderWindow renderWindow, uint32_t textureCount, RenderFormat format);
+         ~VulkanSwapChain() override;

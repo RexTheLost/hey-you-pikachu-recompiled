@@ -6,6 +6,7 @@ import android.view.View;
 import android.view.ViewGroup;
 import android.view.WindowInsets;
 import android.view.WindowInsetsController;
+import android.view.WindowManager;
 
 import org.libsdl.app.SDLActivity;
 
@@ -34,6 +35,18 @@ public class HypActivity extends SDLActivity {
             } catch (Exception ignored) { }
             if (old != null) old.uncaughtException(t, e);
         });
+        // The game window covers the whole screen: no space kept for the status bar, the
+        // gesture bar or the camera hole (otherwise the 4:3 picture is shorter than the screen).
+        WindowManager.LayoutParams lp = getWindow().getAttributes();
+        if (android.os.Build.VERSION.SDK_INT >= 30) {
+            lp.layoutInDisplayCutoutMode = WindowManager.LayoutParams.LAYOUT_IN_DISPLAY_CUTOUT_MODE_ALWAYS;
+        } else if (android.os.Build.VERSION.SDK_INT >= 28) {
+            lp.layoutInDisplayCutoutMode = WindowManager.LayoutParams.LAYOUT_IN_DISPLAY_CUTOUT_MODE_SHORT_EDGES;
+        }
+        getWindow().setAttributes(lp);
+        if (android.os.Build.VERSION.SDK_INT >= 30) {
+            getWindow().setDecorFitsSystemWindows(false);
+        }
         super.onCreate(state);
         if (mBrokenLibraries || mLayout == null) return;
         controls = new ControlsView(this);

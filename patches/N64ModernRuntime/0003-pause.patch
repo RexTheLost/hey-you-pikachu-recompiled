@@ -1,0 +1,76 @@
+diff --git a/ultramodern/include/ultramodern/ultramodern.hpp b/ultramodern/include/ultramodern/ultramodern.hpp
+index 7c2cb7d..f514f5a 100644
+--- a/ultramodern/include/ultramodern/ultramodern.hpp
++++ b/ultramodern/include/ultramodern/ultramodern.hpp
+@@ -107,6 +107,11 @@ uint32_t get_audio_frequency();
+ // sent whenever buffered audio drops below low_water_ms, and the next only after the
+ // game queues its buffer. Call before the game starts.
+ void set_ai_buffer_pacing(bool enabled, uint32_t low_water_ms);
++// Pause the game (app in the background): no VI or AI events, no new frames. On resume the
++// game clock is shifted by the paused time, so the game doesn't see the gap.
++void set_paused(bool paused);
++bool is_paused();
++void shift_start_time(std::chrono::high_resolution_clock::duration by);
+ void notify_ai_buffer_queued();
+ 
+ struct audio_callbacks_t {
+diff --git a/ultramodern/src/events.cpp b/ultramodern/src/events.cpp
+index 493175b..a37e2b5 100644
+--- a/ultramodern/src/events.cpp
++++ b/ultramodern/src/events.cpp
+@@ -182,6 +182,16 @@ void ultramodern::set_ai_buffer_pacing(bool enabled, uint32_t low_water_ms) {
+     ai_buffer_pacing = enabled;
+ }
+ 
++static std::atomic<bool> game_paused{ false };
++
++void ultramodern::set_paused(bool paused) {
++    game_paused = paused;
++}
++
++bool ultramodern::is_paused() {
++    return game_paused;
++}
++
+ void ultramodern::notify_ai_buffer_queued() {
+     ai_event_outstanding = false;
+ }
+@@ -191,7 +201,7 @@ void ai_thread_func() {
+     using namespace std::chrono_literals;
+     while (!exited) {
+         ultramodern::sleep_milliseconds(1);
+-        if (!ai_buffer_pacing || !ultramodern::is_game_started() || ai_event_outstanding) {
++        if (!ai_buffer_pacing || !ultramodern::is_game_started() || ai_event_outstanding || game_paused) {
+             continue;
+         }
+         uint32_t frames_left = ultramodern::get_remaining_audio_bytes() / (2 * sizeof(int16_t));
+@@ -223,6 +233,14 @@ void vi_thread_func() {
+     int remaining_retraces = 1;
+ 
+     while (!exited) {
++        if (game_paused) {
++            auto pause_begin = std::chrono::high_resolution_clock::now();
++            while (game_paused && !exited) {
++                ultramodern::sleep_milliseconds(10);
++            }
++            ultramodern::shift_start_time(std::chrono::high_resolution_clock::now() - pause_begin);
++            continue;
++        }
+         // Determine the next VI time (more accurate than adding 16ms each VI interrupt)
+         auto next = ultramodern::get_start() + (total_vis * 1000000us) / (60 * ultramodern::get_speed_multiplier());
+         //if (next > std::chrono::high_resolution_clock::now()) {
+diff --git a/ultramodern/src/timer.cpp b/ultramodern/src/timer.cpp
+index d36ffcc..917ac87 100644
+--- a/ultramodern/src/timer.cpp
++++ b/ultramodern/src/timer.cpp
+@@ -153,6 +153,10 @@ std::chrono::high_resolution_clock::time_point ultramodern::get_start() {
+     return start_time;
+ }
+ 
++void ultramodern::shift_start_time(std::chrono::high_resolution_clock::duration by) {
++    start_time += by;
++}
++
+ std::chrono::high_resolution_clock::duration ultramodern::time_since_start() {
+     return std::chrono::high_resolution_clock::now() - start_time;
+ }

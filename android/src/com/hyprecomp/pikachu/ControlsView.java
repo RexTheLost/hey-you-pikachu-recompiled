@@ -1,7 +1,10 @@
 package com.hyprecomp.pikachu;
 
 import android.content.Context;
+import android.content.Intent;
+import android.content.IntentFilter;
 import android.content.SharedPreferences;
+import android.os.BatteryManager;
 import android.graphics.Canvas;
 import android.graphics.Color;
 import android.graphics.Paint;
@@ -12,7 +15,9 @@ import android.util.SparseArray;
 import android.view.MotionEvent;
 import android.view.View;
 
+import java.text.DateFormat;
 import java.util.ArrayList;
+import java.util.Date;
 import java.util.List;
 
 /**
@@ -49,6 +54,9 @@ public class ControlsView extends View {
     private String heard = "";
     private int micStatus = 0;
     private boolean listening;
+    private String status = "";                          // "12:34  87%" in the top-left corner
+    private long statusAt = 0;
+    private final Paint statusPaint = new Paint(Paint.ANTI_ALIAS_FLAG);
 
     public ControlsView(HypActivity a) {
         super(a);
@@ -76,7 +84,7 @@ public class ControlsView extends View {
         buttons.add(new Btn("◀", HypNative.CL, -0.32f, 0.22f, 0.050f, c, false));
         buttons.add(new Btn("▶", HypNative.CR, -0.12f, 0.22f, 0.050f, c, false));
         buttons.add(new Btn("R", HypNative.R, -0.42f, 0.08f, 0.052f, grey, false));
-        buttons.add(new Btn("L", HypNative.L, 0.08f, 0.08f, 0.052f, grey, false));
+        buttons.add(new Btn("L", HypNative.L, 0.08f, 0.16f, 0.052f, grey, false));
         buttons.add(new Btn("START", HypNative.START, 0.24f, 0.30f, 0.065f, Color.rgb(200, 50, 50), false));
         buttons.add(new Btn("Words", WORDS, 0.36f, 0.10f, 0.062f, yellow, true));
         buttons.add(new Btn("Hide", HIDE, 0.10f, 0.30f, 0.050f, grey, true));
@@ -97,7 +105,30 @@ public class ControlsView extends View {
         } catch (UnsatisfiedLinkError e) {
             // libmain.so not loaded yet
         }
+        long now = System.currentTimeMillis();
+        if (now - statusAt > 5000) {
+            statusAt = now;
+            String s = updateStatus();
+            if (!s.equals(status)) {
+                status = s;
+                invalidate();
+            }
+        }
         postDelayed(this::poll, 200);
+    }
+
+    /** Time (the phone's 12/24 h setting) and battery percent, with a bolt while charging. */
+    private String updateStatus() {
+        String time = DateFormat.getTimeInstance(DateFormat.SHORT).format(new Date());
+        if (android.text.format.DateFormat.is24HourFormat(getContext())) {
+            time = new java.text.SimpleDateFormat("HH:mm", java.util.Locale.getDefault()).format(new Date());
+        }
+        Intent b = getContext().registerReceiver(null, new IntentFilter(Intent.ACTION_BATTERY_CHANGED));
+        if (b == null) return time;
+        int level = b.getIntExtra(BatteryManager.EXTRA_LEVEL, -1), scale = b.getIntExtra(BatteryManager.EXTRA_SCALE, 100);
+        int plugged = b.getIntExtra(BatteryManager.EXTRA_PLUGGED, 0);
+        if (level < 0 || scale <= 0) return time;
+        return time + "   " + (plugged != 0 ? "\u26A1" : "") + Math.round(100f * level / scale) + "%";
     }
 
     @Override
@@ -246,6 +277,14 @@ public class ControlsView extends View {
             c.drawText(msg, getWidth() / 2f, 0.925f * h, banner);
         }
 
+        if (!status.isEmpty()) {                          // clock + battery, top-left corner
+            statusPaint.setTextSize(0.042f * h);
+            statusPaint.setFakeBoldText(true);
+            statusPaint.setColor(Color.argb(150, 0, 0, 0));
+            c.drawText(status, 0.032f * h, 0.062f * h, statusPaint);
+            statusPaint.setColor(Color.argb(220, 255, 255, 255));
+            c.drawText(status, 0.03f * h, 0.06f * h, statusPaint);
+        }
         for (Btn b : buttons) {
             if (hidden && b.bits != HIDE) continue;
             boolean on = held(b);

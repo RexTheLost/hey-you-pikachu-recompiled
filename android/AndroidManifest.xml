@@ -2,8 +2,8 @@
 <!-- Hey You, Pikachu! Recompiled for Android. Packaged by tools/package_android.sh (no Gradle). -->
 <manifest xmlns:android="http://schemas.android.com/apk/res/android"
     package="com.hyprecomp.pikachu"
-    android:versionCode="4"
-    android:versionName="0.4-android"
+    android:versionCode="5"
+    android:versionName="0.5-android"
     android:installLocation="auto">
 
     <uses-feature android:name="android.hardware.vulkan.version" android:version="0x401000" android:required="true" />
@@ -41,7 +41,7 @@
             android:alwaysRetainTaskState="true"
             android:launchMode="singleInstance"
             android:screenOrientation="sensorLandscape"
-            android:configChanges="layoutDirection|locale|orientation|uiMode|screenLayout|screenSize|smallestScreenSize|keyboard|keyboardHidden|navigation"
+            android:configChanges="layoutDirection|locale|orientation|uiMode|screenLayout|screenSize|smallestScreenSize|keyboard|keyboardHidden|navigation|density|fontScale|colorMode|touchscreen|mcc|mnc"
             android:preferMinimalPostProcessing="true" />
     </application>
 </manifest>
