@@ -214,7 +214,7 @@ index e450855..2297421 100755
          UNKNOWN,
          TEXTURE_1D,
 diff --git a/src/vulkan/rt64_vulkan.cpp b/src/vulkan/rt64_vulkan.cpp
-index c814269..b086c69 100644
+index c814269..ae04b4d 100644
 --- a/src/vulkan/rt64_vulkan.cpp
 +++ b/src/vulkan/rt64_vulkan.cpp
 @@ -7,6 +7,14 @@
@@ -240,7 +240,7 @@ index c814269..b086c69 100644
  #   elif defined(__ANDROID__)
          assert(renderWindow != nullptr);
          VkAndroidSurfaceCreateInfoKHR surfaceCreateInfo = {};
-@@ -2084,6 +2093,28 @@ namespace RT64 {
+@@ -2084,6 +2093,30 @@ namespace RT64 {
          commandQueue->swapChains.insert(this);
      }
  
@@ -260,7 +260,9 @@ index c814269..b086c69 100644
 +
 +    bool VulkanSwapChain::surfaceStale() const {
 +#   if defined(__ANDROID__) && defined(RT64_SDL_WINDOW_VULKAN)
-+        return androidNativeWindow(renderWindow) != surfaceNativeWindow;
++        // No surface at all (thrown away while the app is in the background) is always stale:
++        // comparing "no window" with "no window" must not count as up to date.
++        return (surface == VK_NULL_HANDLE) || (androidNativeWindow(renderWindow) != surfaceNativeWindow);
 +#   else
 +        return false;
 +#   endif
@@ -269,7 +271,7 @@ index c814269..b086c69 100644
      VulkanSwapChain::~VulkanSwapChain() {
          releaseImageViews();
          releaseSwapChain();
-@@ -2162,6 +2193,29 @@ namespace RT64 {
+@@ -2162,6 +2195,33 @@ namespace RT64 {
          // Destroy any image view references to the current swap chain.
          releaseImageViews();
  
@@ -296,10 +298,14 @@ index c814269..b086c69 100644
 +        }
 +#   endif
 +
++        if (surface == VK_NULL_HANDLE) {
++            return false;
++        }
++
          // We don't actually need to query the surface capabilities but the validation layer seems to cache the valid extents from this call.
          VkSurfaceCapabilitiesKHR surfaceCapabilities = {};
          vkGetPhysicalDeviceSurfaceCapabilitiesKHR(commandQueue->device->physicalDevice, surface, &surfaceCapabilities);
-@@ -2238,7 +2292,7 @@ namespace RT64 {
+@@ -2238,7 +2298,7 @@ namespace RT64 {
      bool VulkanSwapChain::needsResize() const {
          uint32_t windowWidth, windowHeight;
          getWindowSize(windowWidth, windowHeight);
@@ -308,7 +314,7 @@ index c814269..b086c69 100644
      }
  
      void VulkanSwapChain::setVsyncEnabled(bool vsyncEnabled) {
-@@ -2278,6 +2332,10 @@ namespace RT64 {
+@@ -2278,6 +2338,10 @@ namespace RT64 {
      }
  
      uint32_t VulkanSwapChain::getRefreshRate() const {
