@@ -252,7 +252,12 @@ hyp::renderer::RT64Context::RT64Context(uint8_t* rdram, ultramodern::renderer::W
     auto& cur_config = ultramodern::renderer::get_graphics_config();
     set_application_user_config(app.get(), cur_config);
     app->userConfig.developerMode = debug;
-    switch (cur_config.api_option) {
+    ultramodern::renderer::GraphicsApi api_option = cur_config.api_option;
+    if (const char* api_env = std::getenv("HYP_GFX_API")) {   // debugging: HYP_GFX_API=vulkan / d3d12
+        if (std::string(api_env) == "vulkan") api_option = ultramodern::renderer::GraphicsApi::Vulkan;
+        else if (std::string(api_env) == "d3d12") api_option = ultramodern::renderer::GraphicsApi::D3D12;
+    }
+    switch (api_option) {
         case ultramodern::renderer::GraphicsApi::D3D12:
             app->userConfig.graphicsAPI = RT64::UserConfiguration::GraphicsAPI::D3D12;
             break;
