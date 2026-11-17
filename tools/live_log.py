@@ -35,7 +35,14 @@ def main():
         after = int(open(last_file).read().strip() or 0)
     k = key()
     while True:
-        data = json.loads(get('/live?key=%s&after=%d' % (k, after)))
+        try:
+            data = json.loads(get('/live?key=%s&after=%d' % (k, after)))
+        except Exception as e:                      # network hiccup: keep following
+            if '--follow' not in sys.argv:
+                raise
+            print('(connection problem: %s; retrying)' % e, file=sys.stderr)
+            time.sleep(5)
+            continue
         items = [('log', x) for x in data['lines']] + [('clip', x) for x in data['clips']]
         items.sort(key=lambda t: t[1]['id'])
         for kind, x in items:
