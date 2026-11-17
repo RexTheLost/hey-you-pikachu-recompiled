@@ -88,6 +88,10 @@ public class LauncherActivity extends Activity {
         });
         box.addView(skip);
         setContentView(box);
+        if (file(CRASH).exists() && file(CRASH).lastModified() < installedAt()) {
+            // From a version installed before this one: not news any more.
+            file(CRASH).renameTo(file("data/crash_last.txt"));
+        }
         if (file(CRASH).exists()) showCrash();
         else next();
     }
@@ -98,7 +102,10 @@ public class LauncherActivity extends Activity {
     private void showCrash() {
         StringBuilder r = new StringBuilder();
         r.append("Pikachu Android crash report (version ").append(versionName()).append(", Android ")
-            .append(android.os.Build.VERSION.RELEASE).append(", ").append(android.os.Build.MODEL).append(")\n\n");
+            .append(android.os.Build.VERSION.RELEASE).append(", ").append(android.os.Build.MODEL).append(")\n");
+        r.append("crashed ").append(android.text.format.DateFormat.format("yyyy-MM-dd HH:mm:ss", file(CRASH).lastModified()))
+            .append(", this version installed ").append(android.text.format.DateFormat.format("yyyy-MM-dd HH:mm:ss", installedAt()))
+            .append("\n\n");
         r.append(readText(file(CRASH), 12000));
         r.append("\n--- log ---\n").append(readText(file(LOG), 6000));
         final String report = r.toString();
@@ -138,6 +145,15 @@ public class LauncherActivity extends Activity {
         sv.addView(body);
         box.addView(sv);
         setContentView(box);
+    }
+
+    /** When this version of the app was installed (or updated). */
+    private long installedAt() {
+        try {
+            return getPackageManager().getPackageInfo(getPackageName(), 0).lastUpdateTime;
+        } catch (Exception e) {
+            return 0;
+        }
     }
 
     private String versionName() {
