@@ -17,22 +17,6 @@ import java.util.List;
 /** The game: SDL's activity (it runs libmain.so) with the on-screen controls laid over it. */
 public class HypActivity extends SDLActivity {
     private ControlsView controls;
-    private final MicRecorder mic = new MicRecorder();
-
-    @Override
-    protected void onResume() {
-        super.onResume();
-        if (!mBrokenLibraries && checkSelfPermission(android.Manifest.permission.RECORD_AUDIO)
-                == android.content.pm.PackageManager.PERMISSION_GRANTED) {
-            mic.start();
-        }
-    }
-
-    @Override
-    protected void onPause() {
-        mic.stop();
-        super.onPause();
-    }
 
     @Override
     protected String[] getLibraries() {

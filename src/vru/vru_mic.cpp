@@ -124,14 +124,6 @@ namespace {
     }
 
     void open_device() {
-#ifdef __ANDROID__
-        // Android: the app records with its own AudioRecord (voice-recognition source, stopped while
-        // the app is in the background) and feeds us through mic_feed. SDL's capture device is not
-        // used: its pause/resume handling raced with reopening it.
-        device = 1;
-        hyp::vru::voice_log("[mic] Android: audio comes from the app's recorder\n");
-        return;
-#endif
         if (device != 0) SDL_CloseAudioDevice(device);
         SDL_AudioSpec want{};
         want.freq = rate;
@@ -154,9 +146,11 @@ namespace {
     // Close and reopen the capture device; call WITHOUT holding the lock.
     void reopen_device(const std::string& name) {
 #ifdef __ANDROID__
+        // Android: never close/reopen SDL's capture device. Its audio pause/resume locks race with it,
+        // and since 0.10 every version that reopened (or replaced) the microphone crackled. SDL itself
+        // stops and restarts the stream around the background.
         (void)name;
-        java_restart = true;
-        hyp::vru::voice_log("[mic] asked the app to restart its recorder\n");
+        hyp::vru::voice_log("[mic] got only silence from the microphone (not reopened on Android)\n");
         return;
 #endif
         SDL_AudioDeviceID old = device;

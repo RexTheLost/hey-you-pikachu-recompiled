@@ -1,0 +1,31 @@
+--- a/src/audio/aaudio/SDL_aaudio.c	2026-11-16 22:17:12.581885200 -0700
++++ b/src/audio/aaudio/SDL_aaudio.c	2026-11-16 22:20:43.269210300 -0700
+@@ -27,6 +27,8 @@
+ #include "../SDL_audio_c.h"
+ #include "../../core/android/SDL_android.h"
+ #include "SDL_aaudio.h"
++#include <stdio.h>
++#include "SDL_timer.h"
+ 
+ /* Debug */
+ #if 0
+@@ -304,6 +306,19 @@
+     aaudio_result_t res;
+     int64_t timeoutNanoseconds = 1 * 1000 * 1000; /* 8 ms */
+     res = ctx.AAudioStream_write(private->stream, private->mixbuf, private->mixlen / private->frame_size, timeoutNanoseconds);
++    {   /* HYP: report device under-runs (crackles) in the game log, at most every 10 s */
++        static int last_xruns = 0;
++        static Uint32 last_report = 0;
++        const Uint32 now = SDL_GetTicks();
++        if (now - last_report > 10000) {
++            const int xruns = ctx.AAudioStream_getXRunCount(private->stream);
++            if (xruns != last_xruns) {
++                fprintf(stderr, "[audio] AAudio under-runs: %d (+%d)\n", xruns, xruns - last_xruns);
++                last_xruns = xruns;
++            }
++            last_report = now;
++        }
++    }
+     if (res < 0) {
+         LOGI("%s : %s", __func__, ctx.AAudio_convertResultToText(res));
+         if (RecoverAAudioDevice(this) < 0) {
