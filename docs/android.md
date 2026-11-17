@@ -15,7 +15,7 @@ arm64 phones with Vulkan 1.1 (built for the user's Galaxy S24 FE).
 Needs the Android SDK (`D:/AI/tools/android-sdk`: build-tools 36.1.0, platform 35, NDK
 28.1.13356709), JDK 21, cmake + ninja, and SDL2 2.30.3 source in `android/third_party/SDL2`
 (not in git; the official release zip, unpacked). Two local edits to that SDL copy:
-`src/sensor/android/SDL_androidsensor.c` uses `ALooper_pollOnce` (NDK 28 removed `pollAll`).
+`src/sensor/android/SDL_androidsensor.c` uses `ALooper_pollOnce` (NDK 28 removed `pollAll`). `android/sdl2-aaudio-blocking-write.patch` (apply in `android/third_party/SDL2`) makes the AAudio output write block instead of dropping what does not fit in 1 ms (crackling), gives the stream about 20 ms of buffer, and logs under-runs to log.txt.
 
 ## How it fits together
 

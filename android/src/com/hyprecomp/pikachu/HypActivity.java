@@ -123,22 +123,31 @@ public class HypActivity extends SDLActivity {
                 if (w != null) HypNative.sayWord(w);
                 else showWords();                          // header tapped: keep the list open
             })
-            .setNeutralButton("Copy logs", (d, which) -> copyVoiceLog())
+            .setNeutralButton("Send logs to Claude", (d, which) -> sendLogs())
             .setNegativeButton("Close", null)
             .show();
     }
 
-    /** Puts the end of data/voice.log on the clipboard, to paste into a bug report. */
-    void copyVoiceLog() {
-        String text;
-        try {
-            text = "voice log:\n" + LauncherActivity.readText(new java.io.File(getFilesDir(), "data/voice.log"), 5000)
-                + "\n--- game log ---\n" + LauncherActivity.readText(new java.io.File(getFilesDir(), LauncherActivity.LOG), 5000);
-        } catch (Exception e) {
-            text = "no voice log: " + e;
-        }
+    /**
+     * Sends the current game and voice logs to the report inbox (for problems that don't crash,
+     * like crackling sound), and copies them too in case there is no internet.
+     */
+    void sendLogs() {
+        final String text = "Logs sent from the game on request\n\n--- game log ---\n"
+            + LauncherActivity.readText(new java.io.File(getFilesDir(), LauncherActivity.LOG), 30000)
+            + "\n--- voice log ---\n"
+            + LauncherActivity.readText(new java.io.File(getFilesDir(), "data/voice.log"), 10000);
         android.content.ClipboardManager cm = (android.content.ClipboardManager) getSystemService(CLIPBOARD_SERVICE);
-        cm.setPrimaryClip(android.content.ClipData.newPlainText("voice log", text));
-        android.widget.Toast.makeText(this, "Logs copied", android.widget.Toast.LENGTH_SHORT).show();
+        cm.setPrimaryClip(android.content.ClipData.newPlainText("logs", text));
+        String version = "?";
+        try { version = getPackageManager().getPackageInfo(getPackageName(), 0).versionName; } catch (Exception ignored) { }
+        final String v = version;
+        android.widget.Toast.makeText(this, "Sending logs...", android.widget.Toast.LENGTH_SHORT).show();
+        new Thread(() -> {
+            boolean ok = LauncherActivity.postReport("logs", v, text);
+            runOnUiThread(() -> android.widget.Toast.makeText(this,
+                ok ? "Logs sent to Claude" : "Could not send (no internet?). The logs are copied: paste them instead.",
+                android.widget.Toast.LENGTH_LONG).show());
+        }).start();
     }
 }

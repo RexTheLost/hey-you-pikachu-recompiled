@@ -214,26 +214,9 @@ public class LauncherActivity extends Activity {
             done.accept(true);
             return;
         }
+        final String version = versionName();
         new Thread(() -> {
-            boolean ok = false;
-            try {
-                org.json.JSONObject body = new org.json.JSONObject();
-                body.put("kind", kind);
-                body.put("version", versionName());
-                body.put("device", android.os.Build.MANUFACTURER + " " + android.os.Build.MODEL + ", Android " + android.os.Build.VERSION.RELEASE);
-                body.put("text", report);
-                byte[] bytes = body.toString().getBytes(StandardCharsets.UTF_8);
-                HttpURLConnection c = (HttpURLConnection) new URL(REPORT_INBOX).openConnection();
-                c.setConnectTimeout(10000);
-                c.setReadTimeout(15000);
-                c.setRequestMethod("POST");
-                c.setDoOutput(true);
-                c.setRequestProperty("Content-Type", "application/json");
-                c.setRequestProperty("X-HYP-App", "hyp-android");
-                try (OutputStream o = c.getOutputStream()) { o.write(bytes); }
-                ok = c.getResponseCode() == 200;
-                c.disconnect();
-            } catch (Exception ignored) { }
+            boolean ok = postReport(kind, version, report);
             if (ok) {
                 java.util.Set<String> sent = new java.util.HashSet<>(prefs.getStringSet("sent_reports", new java.util.HashSet<>()));
                 sent.add(id);
@@ -242,6 +225,31 @@ public class LauncherActivity extends Activity {
             final boolean result = ok;
             runOnUiThread(() -> done.accept(result));
         }).start();
+    }
+
+    /** Posts one report to the inbox (blocking: call it off the UI thread). True if it got there. */
+    static boolean postReport(String kind, String version, String text) {
+        try {
+            org.json.JSONObject body = new org.json.JSONObject();
+            body.put("kind", kind);
+            body.put("version", version);
+            body.put("device", android.os.Build.MANUFACTURER + " " + android.os.Build.MODEL + ", Android " + android.os.Build.VERSION.RELEASE);
+            body.put("text", text);
+            byte[] bytes = body.toString().getBytes(StandardCharsets.UTF_8);
+            HttpURLConnection c = (HttpURLConnection) new URL(REPORT_INBOX).openConnection();
+            c.setConnectTimeout(10000);
+            c.setReadTimeout(15000);
+            c.setRequestMethod("POST");
+            c.setDoOutput(true);
+            c.setRequestProperty("Content-Type", "application/json");
+            c.setRequestProperty("X-HYP-App", "hyp-android");
+            try (OutputStream o = c.getOutputStream()) { o.write(bytes); }
+            boolean ok = c.getResponseCode() == 200;
+            c.disconnect();
+            return ok;
+        } catch (Exception e) {
+            return false;
+        }
     }
 
     /** When this version of the app was installed (or updated). */
