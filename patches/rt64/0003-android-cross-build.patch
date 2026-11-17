@@ -121,6 +121,19 @@ index 0000000..79a2b0b
 +    std::filesystem::path FileDialog::getOpenFilename(const std::vector<FileFilter> &) { return {}; }
 +    std::filesystem::path FileDialog::getSaveFilename(const std::vector<FileFilter> &) { return {}; }
 +};
+diff --git a/src/hle/rt64_application.cpp b/src/hle/rt64_application.cpp
+index 4e83f71..f7e1c26 100644
+--- a/src/hle/rt64_application.cpp
++++ b/src/hle/rt64_application.cpp
+@@ -261,7 +261,7 @@ namespace RT64 {
+ 
+         // Create the swap chain with the buffer count specified from the configuration.
+         const uint32_t bufferCount = (userConfig.displayBuffering == UserConfiguration::DisplayBuffering::Triple) ? 3 : 2;
+-        swapChain = presentGraphicsWorker->commandQueue->createSwapChain(appWindow->windowHandle, bufferCount, RenderFormat::B8G8R8A8_UNORM);
++        swapChain = presentGraphicsWorker->commandQueue->createSwapChain(appWindow->windowHandle, bufferCount, SwapChainFormat);
+ 
+         // Before configuring multisampling, make sure the device actually supports it for the formats we'll use. If it doesn't, turn off antialiasing in the configuration.
+         const RenderSampleCounts colorSampleCounts = device->getSampleCountsSupported(RenderTarget::colorBufferFormat(usesHDR));
 diff --git a/src/hle/rt64_application_window.cpp b/src/hle/rt64_application_window.cpp
 index 07ef521..a976e17 100755
 --- a/src/hle/rt64_application_window.cpp
@@ -143,6 +156,19 @@ index 07ef521..a976e17 100755
          static_assert(false && "Android unimplemented");
  #   elif defined(__linux__)
          windowHandle.display = wmInfo.info.x11.display;
+diff --git a/src/render/rt64_shader_library.cpp b/src/render/rt64_shader_library.cpp
+index d1c5273..d010eb0 100644
+--- a/src/render/rt64_shader_library.cpp
++++ b/src/render/rt64_shader_library.cpp
+@@ -599,7 +599,7 @@ namespace RT64 {
+             RenderGraphicsPipelineDesc pipelineDesc;
+             pipelineDesc.vertexShader = fullScreenVertexShader.get();
+             pipelineDesc.pixelShader = regularShader.get();
+-            pipelineDesc.renderTargetFormat[0] = RenderFormat::B8G8R8A8_UNORM; // TODO: Use whatever format the swap chain was created with.
++            pipelineDesc.renderTargetFormat[0] = SwapChainFormat;
+             pipelineDesc.renderTargetBlend[0] = RenderBlendDesc::Copy();
+             pipelineDesc.renderTargetCount = 1;
+             pipelineDesc.pipelineLayout = videoInterfaceNearest.pipelineLayout.get();
 diff --git a/src/render/rt64_texture_cache.cpp b/src/render/rt64_texture_cache.cpp
 index 35dd269..69d9251 100644
 --- a/src/render/rt64_texture_cache.cpp
@@ -156,3 +182,21 @@ index 35dd269..69d9251 100644
  
                          if (db.config.hashVersion <= TMEMHasher::CurrentHashVersion) {
                              db.resolvePaths(fileSystems[i].get(), uint32_t(i), fileSystemResolvedPaths[i], false, nullptr, &fileSystemStreamSets[i]);
+diff --git a/src/rhi/rt64_render_interface_types.h b/src/rhi/rt64_render_interface_types.h
+index e450855..2297421 100755
+--- a/src/rhi/rt64_render_interface_types.h
++++ b/src/rhi/rt64_render_interface_types.h
+@@ -159,6 +159,13 @@ namespace RT64 {
+         BC7_UNORM_SRGB
+     };
+ 
++    // Format of the window's swap chain: Android surfaces offer RGBA8, not BGRA8.
++#if defined(__ANDROID__)
++    constexpr RenderFormat SwapChainFormat = RenderFormat::R8G8B8A8_UNORM;
++#else
++    constexpr RenderFormat SwapChainFormat = RenderFormat::B8G8R8A8_UNORM;
++#endif
++
+     enum class RenderTextureDimension {
+         UNKNOWN,
+         TEXTURE_1D,
