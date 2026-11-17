@@ -12,3 +12,8 @@ build/
 rsp/*.cpp
 models/
 android/third_party/
+
+# Android crash reports fetched from the inbox (tools/fetch_reports.py)
+reports/
+reports-worker/node_modules/
+reports-worker/.wrangler/

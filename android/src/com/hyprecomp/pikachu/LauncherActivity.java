@@ -135,7 +135,7 @@ public class LauncherActivity extends Activity {
             if (e.getDescription() != null) r.append("description: ").append(e.getDescription()).append("\n");
             r.append("\n--- game log ---\n").append(readText(file(LOG), 6000));
             r.append("\n--- voice log ---\n").append(readText(file("data/voice.log"), 3000));
-            showReport("The game closed unexpectedly last time: " + why + ". Tap Copy report and paste it to Claude.",
+            showReport("The game closed unexpectedly last time: " + why + ".", "exit", "exit:" + e.getTimestamp(),
                 r.toString(), this::recreate);
             return true;
         } catch (Exception ex) {
@@ -155,23 +155,27 @@ public class LauncherActivity extends Activity {
             .append("\n\n");
         r.append(readText(file(CRASH), 12000));
         r.append("\n--- log ---\n").append(readText(file(LOG), 6000));
-        showReport("The game crashed last time. Tap Copy report and paste it to Claude.", r.toString(), () -> {
+        r.append("\n--- voice log ---\n").append(readText(file("data/voice.log"), 3000));
+        showReport("The game crashed last time.", "crash", "crash:" + file(CRASH).lastModified(), r.toString(), () -> {
             file(CRASH).renameTo(file("data/crash_last.txt"));
             recreate();
         });
     }
 
     /** A report screen with Copy report and Start the game. */
-    private void showReport(String headline, final String report, final Runnable start) {
+    private void showReport(String headline, String kind, String id, final String report, final Runnable start) {
         LinearLayout box = new LinearLayout(this);
         box.setOrientation(LinearLayout.VERTICAL);
         box.setBackgroundColor(Color.rgb(250, 214, 60));
         box.setPadding(32, 24, 32, 24);
         TextView head = new TextView(this);
-        head.setText(headline);
+        head.setText(headline + " Sending the report to Claude...");
         head.setTextSize(18);
         head.setTextColor(Color.rgb(60, 40, 10));
         box.addView(head);
+        sendReport(kind, id, report, ok -> head.setText(headline + (ok
+            ? " The report was sent to Claude automatically."
+            : " The report could not be sent (no internet?). Tap Copy report and paste it to Claude.")));
         LinearLayout row = new LinearLayout(this);
         Button copy = new Button(this);
         copy.setText("Copy report");
@@ -196,6 +200,48 @@ public class LauncherActivity extends Activity {
         sv.addView(body);
         box.addView(sv);
         setContentView(box);
+    }
+
+    static final String REPORT_INBOX = "https://hyp-reports.pinball-leaderboard.workers.dev/report";
+
+    /**
+     * Sends a report to the report inbox (reports-worker/) once per id, on a background thread;
+     * done(true) on the UI thread when it got there (or was sent before).
+     */
+    private void sendReport(String kind, String id, String report, java.util.function.Consumer<Boolean> done) {
+        final android.content.SharedPreferences prefs = getPreferences(MODE_PRIVATE);
+        if (prefs.getStringSet("sent_reports", new java.util.HashSet<>()).contains(id)) {
+            done.accept(true);
+            return;
+        }
+        new Thread(() -> {
+            boolean ok = false;
+            try {
+                org.json.JSONObject body = new org.json.JSONObject();
+                body.put("kind", kind);
+                body.put("version", versionName());
+                body.put("device", android.os.Build.MANUFACTURER + " " + android.os.Build.MODEL + ", Android " + android.os.Build.VERSION.RELEASE);
+                body.put("text", report);
+                byte[] bytes = body.toString().getBytes(StandardCharsets.UTF_8);
+                HttpURLConnection c = (HttpURLConnection) new URL(REPORT_INBOX).openConnection();
+                c.setConnectTimeout(10000);
+                c.setReadTimeout(15000);
+                c.setRequestMethod("POST");
+                c.setDoOutput(true);
+                c.setRequestProperty("Content-Type", "application/json");
+                c.setRequestProperty("X-HYP-App", "hyp-android");
+                try (OutputStream o = c.getOutputStream()) { o.write(bytes); }
+                ok = c.getResponseCode() == 200;
+                c.disconnect();
+            } catch (Exception ignored) { }
+            if (ok) {
+                java.util.Set<String> sent = new java.util.HashSet<>(prefs.getStringSet("sent_reports", new java.util.HashSet<>()));
+                sent.add(id);
+                prefs.edit().putStringSet("sent_reports", sent).apply();
+            }
+            final boolean result = ok;
+            runOnUiThread(() -> done.accept(result));
+        }).start();
     }
 
     /** When this version of the app was installed (or updated). */

@@ -1,0 +1,13 @@
+// Report inbox for the Android port (crash / unexpected-exit reports sent by the app).
+// Deploy from this folder: npx wrangler deploy. Secret: ADMIN_KEY (HYP_REPORT_KEY in D:\AI\.env).
+{
+	"name": "hyp-reports",
+	"main": "src/index.js",
+	"compatibility_date": "2026-04-07",
+	"workers_dev": true,
+	"preview_urls": false,
+	"durable_objects": {
+		"bindings": [{ "name": "REPORTS", "class_name": "Reports" }]
+	},
+	"migrations": [{ "tag": "v1", "new_sqlite_classes": ["Reports"] }]
+}

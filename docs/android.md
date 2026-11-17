@@ -46,3 +46,11 @@ Needs the Android SDK (`D:/AI/tools/android-sdk`: build-tools 36.1.0, platform 3
 
 Nothing has run on a phone: speed of RT64 on mobile GPUs, Vulkan feature support, the
 microphone path, and whether controllers work (SDL supports Bluetooth/USB pads; untested).
+
+## Automatic reports
+
+After a crash, or when Android ends the game abnormally (memory, ANR, signal...), the launcher
+shows the report on the next start and sends it once to the report inbox: the Cloudflare Worker in
+`reports-worker/` (https://hyp-reports.pinball-leaderboard.workers.dev, deploy with
+`npx wrangler deploy` there; admin key `HYP_REPORT_KEY` in `D:\AI\.env`). `python tools/fetch_reports.py`
+saves waiting reports to `reports/` (gitignored) and marks them fetched; `--list` only shows them.
