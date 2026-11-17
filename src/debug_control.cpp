@@ -106,6 +106,10 @@ namespace {
             int tasks = 0; std::string path;
             in >> tasks; std::getline(in >> std::ws, path);
             hyp::renderer::request_matrix_capture(path, tasks);
+        } else if (cmd == "fbshot") {
+            std::string path; std::getline(in >> std::ws, path);
+            bool ok = hyp::renderer::save_vi_framebuffer(path);
+            std::printf("[control] fbshot %s\n", ok ? "saved" : "failed");
         } else if (cmd == "micreopen") {
             hyp::vru::mic_reopen();
         } else if (cmd == "save") {

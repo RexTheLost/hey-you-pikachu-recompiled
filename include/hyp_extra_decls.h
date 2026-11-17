@@ -7,6 +7,38 @@
 
 #include "recomp.h"
 
+#if defined(__aarch64__)
+// ARM64 (Android): make float -> int conversions return exactly what the x86 build gets, so the game
+// logic runs the same on the phone as on PC. A bare C cast is undefined out of range; x86
+// (cvttss2si) gives INT_MIN for NaN and out-of-range values, while ARM saturates (and gives 0 for
+// NaN). Phone-only crashes (a garbage pointer in Pikachu's object on the way into Ochre Woods)
+// pointed at the game state drifting from the PC's.
+#include <math.h>
+static inline int32_t hyp_f2w(double v) {
+    return (v >= -2147483648.0 && v < 2147483648.0) ? (int32_t)v : INT32_MIN;
+}
+static inline int64_t hyp_f2l(double v) {
+    return (v >= -9223372036854775808.0 && v < 9223372036854775808.0) ? (int64_t)v : INT64_MIN;
+}
+#undef TRUNC_W_S
+#undef TRUNC_W_D
+#undef TRUNC_L_S
+#undef TRUNC_L_D
+#undef CVT_W_S
+#undef CVT_W_D
+#undef CVT_L_S
+#undef CVT_L_D
+#define TRUNC_W_S(val) hyp_f2w((double)(val))
+#define TRUNC_W_D(val) hyp_f2w((double)(val))
+#define TRUNC_L_S(val) hyp_f2l((double)(val))
+#define TRUNC_L_D(val) hyp_f2l((double)(val))
+// rounding-mode aware (the game can change the FPU rounding mode): round first, then convert
+#define CVT_W_S(val) hyp_f2w((double)nearbyintf(val))
+#define CVT_W_D(val) hyp_f2w(nearbyint(val))
+#define CVT_L_S(val) hyp_f2l((double)nearbyintf(val))
+#define CVT_L_D(val) hyp_f2l(nearbyint(val))
+#endif
+
 #ifdef __cplusplus
 extern "C" {
 #endif

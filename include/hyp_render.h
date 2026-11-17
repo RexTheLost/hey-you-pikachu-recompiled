@@ -18,6 +18,9 @@ namespace hyp::renderer {
     // matrix capture: for the next <tasks> display lists, append every G_MTX matrix and
     // the display list drawn with it to <path> (text).
     void request_matrix_capture(const std::string& path, int tasks);
+    // debug: writes the frame the VI shows (RDRAM at VI_ORIGIN, 16- or 32-bit) to <path> as a PPM.
+    // This is the game's own frame in RDRAM, not RT64's GPU picture (CPU-drawn pixels show up here).
+    bool save_vi_framebuffer(const std::string& path);
 }
 
 #endif

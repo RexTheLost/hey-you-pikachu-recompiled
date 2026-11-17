@@ -18,6 +18,8 @@
 #include "hyp_render.h"
 #include "hyp_trace.h"
 
+static uint8_t* debug_rdram = nullptr; // for save_vi_framebuffer
+
 namespace hyp::renderer {
     class RT64Context final : public ultramodern::renderer::RendererContext {
     public:
@@ -213,6 +215,7 @@ hyp::renderer::RT64Context::RT64Context(uint8_t* rdram, ultramodern::renderer::W
 
     appCore.HEADER = dummy_rom_header;
     appCore.RDRAM = rdram;
+    debug_rdram = rdram;
     appCore.DMEM = DMEM;
     appCore.IMEM = IMEM;
 
@@ -350,6 +353,39 @@ static std::string snapshot_path;
 static std::string capture_path;
 static int capture_tasks_left = 0;
 static FILE* capture_file = nullptr;
+
+bool hyp::renderer::save_vi_framebuffer(const std::string& path) {
+    if (debug_rdram == nullptr) return false;
+    ultramodern::renderer::ViRegs* vi = ultramodern::renderer::get_vi_regs();
+    const uint32_t origin = vi->VI_ORIGIN_REG & 0x7FFFFF;
+    const uint32_t width = vi->VI_WIDTH_REG & 0xFFF;
+    const uint32_t type = vi->VI_STATUS_REG & 0x3;          // 2 = 16-bit, 3 = 32-bit
+    if (width == 0 || (type != 2 && type != 3)) return false;
+    const uint32_t height = 240;
+    FILE* f = std::fopen(path.c_str(), "wb");
+    if (f == nullptr) return false;
+    std::fprintf(f, "P6\n%u %u\n255\n", width, height);
+    for (uint32_t y = 0; y < height; y++) {
+        for (uint32_t x = 0; x < width; x++) {
+            uint8_t rgb[3];
+            if (type == 2) {
+                // recompiler RDRAM layout: 32-bit words in host order, so a 16-bit value sits at addr ^ 2
+                const uint32_t a = (origin + (y * width + x) * 2) ^ 2;
+                const uint16_t p = *reinterpret_cast<const uint16_t*>(debug_rdram + (a & 0x7FFFFE));
+                rgb[0] = uint8_t(((p >> 11) & 31) * 255 / 31);
+                rgb[1] = uint8_t(((p >> 6) & 31) * 255 / 31);
+                rgb[2] = uint8_t(((p >> 1) & 31) * 255 / 31);
+            } else {
+                const uint32_t a = origin + (y * width + x) * 4;
+                const uint32_t p = *reinterpret_cast<const uint32_t*>(debug_rdram + (a & 0x7FFFFC));
+                rgb[0] = uint8_t(p >> 24); rgb[1] = uint8_t(p >> 16); rgb[2] = uint8_t(p >> 8);
+            }
+            std::fwrite(rgb, 1, 3, f);
+        }
+    }
+    std::fclose(f);
+    return true;
+}
 
 void hyp::renderer::request_snapshot(const std::string& path) {
     std::lock_guard lock{ capture_mutex };

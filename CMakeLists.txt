@@ -75,6 +75,11 @@ if (MSVC)
 else()
     target_compile_options(RecompiledFuncs PRIVATE -include ${CMAKE_SOURCE_DIR}/include/hyp_extra_decls.h)
 endif()
+if (ANDROID)
+    # ARM64 has FMA: without this the compiler fuses a*b+c (one rounding instead of two), so the
+    # game's float maths drifts from the N64 and from the x86 build.
+    target_compile_options(RecompiledFuncs PRIVATE -ffp-contract=off)
+endif()
 target_include_directories(RecompiledFuncs PRIVATE
     ${CMAKE_SOURCE_DIR}/include
     ${CMAKE_SOURCE_DIR}/lib/N64ModernRuntime/ultramodern/include

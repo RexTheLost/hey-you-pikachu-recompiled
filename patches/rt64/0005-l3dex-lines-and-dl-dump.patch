@@ -1,0 +1,201 @@
+diff --git a/src/gbi/rt64_gbi_f3dex2.cpp b/src/gbi/rt64_gbi_f3dex2.cpp
+index 47d9208..90eee17 100644
+--- a/src/gbi/rt64_gbi_f3dex2.cpp
++++ b/src/gbi/rt64_gbi_f3dex2.cpp
+@@ -4,6 +4,8 @@
+ 
+ #include "rt64_gbi_f3dex2.h"
+ 
++#include <cstdio>
++
+ #include <cassert>
+ 
+ #include "../include/rt64_extended_gbi.h"
+diff --git a/src/gbi/rt64_gbi_l3dex2.cpp b/src/gbi/rt64_gbi_l3dex2.cpp
+index 9938e75..336f545 100644
+--- a/src/gbi/rt64_gbi_l3dex2.cpp
++++ b/src/gbi/rt64_gbi_l3dex2.cpp
+@@ -4,12 +4,18 @@
+ 
+ #include "rt64_gbi_l3dex2.h"
+ 
++#include <cstdio>
++
+ #include "rt64_gbi_f3dex2.h"
+ 
+ namespace RT64 {
+     namespace GBI_L3DEX2 {
++        // gSPLineW3D: w0 = G_LINE3D | v0*2 << 16 | v1*2 << 8 | wd. Width as GLideN64: 1.5 + wd / 2 pixels.
+         void line3D(State *state, DisplayList **dl) {
+-            assert(false);
++            const uint32_t v0 = (*dl)->p0(16, 8) / 2;
++            const uint32_t v1 = (*dl)->p0(8, 8) / 2;
++            const uint32_t wd = (*dl)->p0(0, 8);
++            state->rsp->drawLine(v0, v1, 1.5f + wd * 0.5f);
+         }
+ 
+         void setup(GBI *gbi) {
+diff --git a/src/hle/rt64_interpreter.cpp b/src/hle/rt64_interpreter.cpp
+index dccaa87..f97dca6 100644
+--- a/src/hle/rt64_interpreter.cpp
++++ b/src/hle/rt64_interpreter.cpp
+@@ -4,6 +4,10 @@
+ 
+ #include "rt64_interpreter.h"
+ 
++#include <cstdio>
++#include <cstdlib>
++#include <chrono>
++
+ #include <cassert>
+ 
+ //#define DUMP_DISPLAY_LISTS
+@@ -32,8 +36,7 @@ namespace RT64 {
+         const uint32_t maskedTextAddress = textAddress & AddressMask;
+         const uint32_t maskedDataAddress = dataAddress & AddressMask;
+         if ((UCode.textAddress != maskedTextAddress) || (UCode.dataAddress != maskedDataAddress)) {
+-            hleGBI = gbiManager.getGBIForUCode(state->RDRAM, maskedTextAddress, maskedDataAddress);
+-            if (hleGBI != nullptr) {
++            hleGBI = gbiManager.getGBIForUCode(state->RDRAM, maskedTextAddress, maskedDataAddress);            if (hleGBI != nullptr) {
+                 state->rsp->setGBI(hleGBI);
+             }
+ 
+@@ -165,6 +168,22 @@ namespace RT64 {
+         // Check RDRAM if required.
+         state->checkRDRAM();
+ 
++        // HYP debug: HYP_RT64_DUMP="<from s>,<to s>,<file>" writes every display-list command in that window.
++        static FILE *dumpFile = nullptr;
++        static double dumpFrom = 0.0, dumpTo = -1.0;
++        static const auto dumpStart = std::chrono::steady_clock::now();
++        static bool dumpInit = false;
++        if (!dumpInit) {
++            dumpInit = true;
++            if (const char *spec = std::getenv("HYP_RT64_DUMP")) {
++                char path[512] = {};
++                if (std::sscanf(spec, "%lf,%lf,%511s", &dumpFrom, &dumpTo, path) == 3) dumpFile = std::fopen(path, "w");
++            }
++        }
++        const double dumpNow = std::chrono::duration<double>(std::chrono::steady_clock::now() - dumpStart).count();
++        FILE *dump = ((dumpFile != nullptr) && (dumpNow >= dumpFrom) && (dumpNow <= dumpTo)) ? dumpFile : nullptr;
++        if (dump != nullptr) std::fprintf(dump, "=== task %.3f start %08X\n", dumpNow, dlStartAdddress);
++
+         // Run the command interpreter.
+         DisplayList *dl = dlStart;
+         uint8_t opCode;
+@@ -177,6 +196,7 @@ namespace RT64 {
+             }
+             else {
+                 func = hleGBI->map[opCode];
++                if (dump != nullptr) std::fprintf(dump, "%u %08X %08X\n", uint32_t(hleGBI->ucode), dl->w0, dl->w1);
+ 
+ #       ifdef DUMP_DISPLAY_LISTS
+                 RT64_LOG_PRINTF("0x%08X 0x%08X", dl->w0, dl->w1);
+diff --git a/src/hle/rt64_rsp.cpp b/src/hle/rt64_rsp.cpp
+index ea0c1ac..9f99c75 100644
+--- a/src/hle/rt64_rsp.cpp
++++ b/src/hle/rt64_rsp.cpp
+@@ -5,6 +5,7 @@
+ #include "rt64_rsp.h"
+ 
+ #include <cassert>
++#include <cmath>
+ 
+ #include "../include/rt64_extended_gbi.h"
+ #include "common/rt64_common.h"
+@@ -1062,6 +1063,82 @@ namespace RT64 {
+         drawIndexedTri(a, b, c, false);
+     }
+ 
++    // Appends a copy of a vertex already in this frame's draw data and returns its global index.
++    uint32_t RSP::copyGlobalVertex(uint32_t globalIndex) {
++        const int workloadCursor = state->ext.workloadQueue->writeCursor;
++        Workload &workload = state->ext.workloadQueue->workloads[workloadCursor];
++        DrawData &d = workload.drawData;
++        const uint32_t newIndex = d.vertexCount();
++        for (int i = 0; i < 3; i++) d.posShorts.emplace_back(d.posShorts[globalIndex * 3 + i]);
++        for (int i = 0; i < 3; i++) d.velShorts.emplace_back(d.velShorts[globalIndex * 3 + i]);
++        for (int i = 0; i < 4; i++) d.normColBytes.emplace_back(d.normColBytes[globalIndex * 4 + i]);
++        for (int i = 0; i < 2; i++) d.tcFloats.emplace_back(d.tcFloats[globalIndex * 2 + i]);
++        d.viewProjIndices.emplace_back(d.viewProjIndices[globalIndex]);
++        d.worldIndices.emplace_back(d.worldIndices[globalIndex]);
++        d.fogIndices.emplace_back(d.fogIndices[globalIndex]);
++        d.lightIndices.emplace_back(d.lightIndices[globalIndex]);
++        d.lightCounts.emplace_back(d.lightCounts[globalIndex]);
++        d.lookAtIndices.emplace_back(d.lookAtIndices[globalIndex]);
++        d.posTransformed.emplace_back(d.posTransformed[globalIndex]);
++        d.posScreen.emplace_back(d.posScreen[globalIndex]);
++        return newIndex;
++    }
++
++    // L3DEX line (HYP: Pikachu's electricity). Drawn as a screen-space quad of the given width in
++    // N64 pixels: four copies of the two end vertices (colour, texcoords and depth kept), with their
++    // screen XY moved sideways through the same path G_MODIFYVTX uses. Lines ignore face culling.
++    void RSP::drawLine(uint32_t a, uint32_t b, float width) {
++        if ((a >= RSP_MAX_VERTICES) || (b >= RSP_MAX_VERTICES)) {
++            return;
++        }
++
++        const int workloadCursor = state->ext.workloadQueue->writeCursor;
++        Workload &workload = state->ext.workloadQueue->workloads[workloadCursor];
++        const uint32_t ga = indices[a], gb = indices[b];
++        used[a] = used[b] = true;
++        if ((workload.drawData.posTransformed[ga][3] <= 0.0f) || (workload.drawData.posTransformed[gb][3] <= 0.0f)) {
++            return; // an end behind the camera: the RSP clips these; skip rather than draw garbage
++        }
++
++        const hlslpp::float3 pa = workload.drawData.posScreen[ga];
++        const hlslpp::float3 pb = workload.drawData.posScreen[gb];
++        float dx = pb[0] - pa[0], dy = pb[1] - pa[1];
++        float len = std::sqrt(dx * dx + dy * dy);
++        if (len < 1e-4f) {
++            dx = 1.0f; dy = 0.0f; len = 1.0f;
++        }
++
++        const float nx = -dy / len * width * 0.5f, ny = dx / len * width * 0.5f;
++        const float xs[4] = { pa[0] + nx, pa[0] - nx, pb[0] + nx, pb[0] - nx };
++        const float ys[4] = { pa[1] + ny, pa[1] - ny, pb[1] + ny, pb[1] - ny };
++        uint32_t q[4];
++        for (int i = 0; i < 4; i++) {
++            q[i] = copyGlobalVertex(i < 2 ? ga : gb);
++            const int16_t sx = int16_t(std::lround(xs[i] * 4.0f));
++            const int16_t sy = int16_t(std::lround(ys[i] * 4.0f));
++            const uint32_t value = (uint32_t(uint16_t(sx)) << 16) | uint32_t(uint16_t(sy));
++            workload.drawData.modifyPosUints.emplace_back(q[i] << 1);
++            workload.drawData.modifyPosUints.emplace_back(value);
++            workload.drawData.posScreen[q[i]][0] = sx / 4.0f;
++            workload.drawData.posScreen[q[i]][1] = sy / 4.0f;
++        }
++
++        uint32_t &geometryMode = geometryModeStack[geometryModeStackSize - 1];
++        const uint32_t savedMode = geometryMode;
++        if (geometryMode & cullBothMask) {
++            geometryMode &= ~cullBothMask;
++            state->updateDrawStatusAttribute(DrawAttribute::GeometryMode);
++        }
++
++        drawIndexedTri(q[0], q[1], q[2], true);
++        drawIndexedTri(q[2], q[1], q[3], true);
++
++        if (geometryMode != savedMode) {
++            geometryMode = savedMode;
++            state->updateDrawStatusAttribute(DrawAttribute::GeometryMode);
++        }
++    }
++
+     void RSP::setViewportAlign(uint16_t ori, int16_t offx, int16_t offy) {
+         extended.global.viewportOrigin = ori;
+         extended.global.viewportOffsetX = offx;
+diff --git a/src/hle/rt64_rsp.h b/src/hle/rt64_rsp.h
+index 1611b7a..2796bf3 100644
+--- a/src/hle/rt64_rsp.h
++++ b/src/hle/rt64_rsp.h
+@@ -273,6 +273,8 @@ namespace RT64 {
+         void setTextureImage(uint8_t fmt, uint8_t siz, uint16_t width, uint32_t segAddress);
+         void drawIndexedTri(uint32_t a, uint32_t b, uint32_t c, bool rawGlobalIndices);
+         void drawIndexedTri(uint32_t a, uint32_t b, uint32_t c);
++        void drawLine(uint32_t a, uint32_t b, float width);
++        uint32_t copyGlobalVertex(uint32_t globalIndex);
+         void setViewportAlign(uint16_t ori, int16_t offx, int16_t offy);
+         void vertexTestZ(uint8_t vtxIndex);
+         void endVertexTestZ();
