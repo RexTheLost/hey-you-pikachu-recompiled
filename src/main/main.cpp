@@ -269,9 +269,20 @@ namespace {
         }
         // Swap channels to undo the address xor from endianness handling.
         const float scale = audio_volume.load() * (0.5f / 32768.0f);
+        // Ducking while the player talks (Android): glide to 10% and back across each buffer, no clicks.
+        static float duck_gain = 1.0f;
+        const float duck_target = hyp::vru::mic_duck_audio() ? 0.1f : 1.0f;
+        const float duck_start = duck_gain;
+        const float duck_step = (duck_target > duck_start ? 0.06f : -0.45f); // fade out fast (~2 buffers), back in gently (~100 ms)
+        float duck_end = duck_start + duck_step;
+        duck_end = duck_step > 0 ? std::min(duck_end, duck_target) : std::max(duck_end, duck_target);
+        duck_gain = duck_end;
+        const size_t frames = sample_count / input_channels;
         for (size_t i = 0; i < sample_count; i += input_channels) {
-            swap_buffer[i + 0 + duplicated_input_frames * input_channels] = audio_data[i + 1] * scale;
-            swap_buffer[i + 1 + duplicated_input_frames * input_channels] = audio_data[i + 0] * scale;
+            const float t = frames > 1 ? float(i / input_channels) / float(frames - 1) : 1.0f;
+            const float g = scale * (duck_start + (duck_end - duck_start) * t);
+            swap_buffer[i + 0 + duplicated_input_frames * input_channels] = audio_data[i + 1] * g;
+            swap_buffer[i + 1 + duplicated_input_frames * input_channels] = audio_data[i + 0] * g;
         }
         if (sample_count <= duplicated_input_frames * input_channels) {
             return;

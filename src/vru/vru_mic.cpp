@@ -97,6 +97,7 @@ namespace {
     }
 
     std::atomic_bool java_restart{ false }; // Android: ask the app's AudioRecord to restart
+    std::atomic_bool duck_audio{ false };   // Talk held or an utterance in progress: game sound turned down
 
     void feed_samples(const float* s, size_t n) {
         std::lock_guard lock{ mutex };
@@ -221,7 +222,11 @@ namespace {
         finish_requested = false;
         // Even if the voice detector never fired, a deliberate press (0.4 s+) with any
         // sound above the background still goes to the recognizer.
+#ifdef __ANDROID__
+        bool held_long = utterance.size() >= size_t(rate * 4 / 10);   // no pre-roll on phones
+#else
         bool held_long = utterance.size() >= preroll_samples + rate * 4 / 10;
+#endif
         if (!heard_speech && held_long && peak_rms > std::max(0.002f, noise_floor * 1.5f)) heard_speech = true;
         if (!heard_speech) {
             // Nothing said: let the game stop listening on its own. Say why, as far as we can tell.
@@ -392,7 +397,13 @@ hyp::vru::MicStatus hyp::vru::mic_status() {
 namespace {
     // Begin an utterance (under the lock).
     void start_recording() {
+#ifdef __ANDROID__
+        // No pre-roll on phones: the 0.3 s before the press is the game's own sound at full volume
+        // (the speaker is beside the microphone); ducking only starts with the press.
+        utterance.clear();
+#else
         utterance.assign(preroll.begin(), preroll.end());
+#endif
         heard_speech = false;
         voice_detected = false;
         peak_rms = 0.0f;
@@ -466,7 +477,18 @@ bool hyp::vru::mic_talk_update(bool talk_pressed) {
     if (state == State::Recording && !talk_pressed) {
         finish_recording();
     }
+    // On a phone the speaker is right beside the microphone: the game's own music and voices got
+    // into the recording and were "heard" as words. Turn the game down while Talk is held.
+    duck_audio = talk_pressed || state == State::Recording;
     return state != State::Idle;
+}
+
+bool hyp::vru::mic_duck_audio() {
+#ifdef __ANDROID__
+    return duck_audio.load();
+#else
+    return false; // PC: headsets and desk speakers; keep the sound as it was
+#endif
 }
 
 void hyp::vru::mic_notice(const std::string& text) {
