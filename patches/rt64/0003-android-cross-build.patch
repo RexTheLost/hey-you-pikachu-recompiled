@@ -156,6 +156,19 @@ index 07ef521..a976e17 100755
          static_assert(false && "Android unimplemented");
  #   elif defined(__linux__)
          windowHandle.display = wmInfo.info.x11.display;
+diff --git a/src/hle/rt64_present_queue.cpp b/src/hle/rt64_present_queue.cpp
+index 8579695..15f0bd7 100644
+--- a/src/hle/rt64_present_queue.cpp
++++ b/src/hle/rt64_present_queue.cpp
+@@ -498,7 +498,7 @@ namespace RT64 {
+                     ext.sharedResources->setSwapChainRate(std::min(ext.appWindow->getRefreshRate(), displayTimingRate));
+                 }
+ 
+-                if (displayTiming) {
++                if (displayTiming && swapChainValid) {
+                     uint32_t newDisplayTimingRate = ext.swapChain->getRefreshRate();
+                     if (newDisplayTimingRate == 0) {
+                         newDisplayTimingRate = UINT32_MAX;
 diff --git a/src/render/rt64_shader_library.cpp b/src/render/rt64_shader_library.cpp
 index d1c5273..d010eb0 100644
 --- a/src/render/rt64_shader_library.cpp
@@ -201,7 +214,7 @@ index e450855..2297421 100755
          UNKNOWN,
          TEXTURE_1D,
 diff --git a/src/vulkan/rt64_vulkan.cpp b/src/vulkan/rt64_vulkan.cpp
-index c814269..fb02002 100644
+index c814269..b086c69 100644
 --- a/src/vulkan/rt64_vulkan.cpp
 +++ b/src/vulkan/rt64_vulkan.cpp
 @@ -7,6 +7,14 @@
@@ -295,6 +308,17 @@ index c814269..fb02002 100644
      }
  
      void VulkanSwapChain::setVsyncEnabled(bool vsyncEnabled) {
+@@ -2278,6 +2332,10 @@ namespace RT64 {
+     }
+ 
+     uint32_t VulkanSwapChain::getRefreshRate() const {
++        if (vk == VK_NULL_HANDLE) {
++            return 0; // no swap chain right now (e.g. Android surface not back yet)
++        }
++
+         VkRefreshCycleDurationGOOGLE refreshCycle = {};
+         VkResult res = vkGetRefreshCycleDurationGOOGLE(commandQueue->device->vk, vk, &refreshCycle);
+         if (res != VK_SUCCESS) {
 diff --git a/src/vulkan/rt64_vulkan.h b/src/vulkan/rt64_vulkan.h
 index 293a580..a446c32 100644
 --- a/src/vulkan/rt64_vulkan.h
