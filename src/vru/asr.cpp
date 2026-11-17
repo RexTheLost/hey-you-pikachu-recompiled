@@ -186,6 +186,41 @@ hyp::asr::Result hyp::asr::match(const std::string& transcript, const std::vecto
     return result;
 }
 
+// whisper sometimes loops on what it heard ("Mushroom. Mushroom. Mushroom. Mushroom"): drop
+// immediate repeats of a word or of a short phrase (up to 3 words), keeping the first copy.
+static std::string collapse_repeats(const std::string& text) {
+    std::vector<std::string> words, keys;
+    std::string cur;
+    auto flush = [&] {
+        if (cur.empty()) return;
+        std::string key;
+        for (char c : cur) if (std::isalnum((unsigned char)c)) key += (char)std::tolower((unsigned char)c);
+        words.push_back(cur);
+        keys.push_back(key);
+        cur.clear();
+    };
+    for (char c : text) {
+        if (std::isspace((unsigned char)c)) flush();
+        else cur += c;
+    }
+    flush();
+    for (size_t n = 1; n <= 3; n++) {
+        for (size_t i = 0; i + 2 * n <= keys.size();) {
+            bool same = true;
+            for (size_t k = 0; k < n && same; k++) same = !keys[i + k].empty() && keys[i + k] == keys[i + n + k];
+            if (same) {
+                words.erase(words.begin() + i + n, words.begin() + i + 2 * n);
+                keys.erase(keys.begin() + i + n, keys.begin() + i + 2 * n);
+            } else {
+                i++;
+            }
+        }
+    }
+    std::string out;
+    for (const auto& w : words) out += " " + w;
+    return out;
+}
+
 hyp::asr::Result hyp::asr::recognize(const std::vector<float>& pcm, const std::vector<std::string>& phrases) {
     auto start = std::chrono::steady_clock::now();
     std::string text;
@@ -256,7 +291,9 @@ hyp::asr::Result hyp::asr::recognize(const std::vector<float>& pcm, const std::v
             }
         }
     }
-    Result result = match(text, phrases);
+    // A truncated last copy ("...Mushroom. Mushroom. Mush") survives as a fragment; matching
+    // still picks the word, and the log shows the cleaned text.
+    Result result = match(collapse_repeats(text), phrases);
     result.no_speech = no_speech;
     result.seconds = std::chrono::duration<double>(std::chrono::steady_clock::now() - start).count();
     return result;

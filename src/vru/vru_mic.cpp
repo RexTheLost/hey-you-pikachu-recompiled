@@ -98,10 +98,15 @@ namespace {
 
     std::atomic_bool java_restart{ false }; // Android: ask the app's AudioRecord to restart
     std::atomic_bool duck_audio{ false };   // Talk held or an utterance in progress: game sound turned down
+    size_t skip_left = 0;                   // phones: samples still to drop at the start of a recording
 
     void feed_samples(const float* s, size_t n) {
         std::lock_guard lock{ mutex };
         for (size_t i = 0; i < n; i++) {
+            if (state == State::Recording && skip_left > 0) {
+                skip_left--;              // neither recorded nor counted by the voice detector
+                continue;
+            }
             preroll.push_back(s[i]);
             if (preroll.size() > preroll_samples) preroll.pop_front();
             if (state == State::Recording && utterance.size() < max_samples) utterance.push_back(s[i]);
@@ -413,8 +418,10 @@ namespace {
     void start_recording() {
 #ifdef __ANDROID__
         // No pre-roll on phones: the 0.3 s before the press is the game's own sound at full volume
-        // (the speaker is beside the microphone); ducking only starts with the press.
+        // (the speaker is beside the microphone). The first 0.35 s after the press still has game
+        // sound draining from the output queue (and the game's own listening sound): skip it too.
         utterance.clear();
+        skip_left = rate * 35 / 100;
 #else
         utterance.assign(preroll.begin(), preroll.end());
 #endif
