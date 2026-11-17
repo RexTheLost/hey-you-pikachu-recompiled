@@ -22,14 +22,15 @@ namespace {
     constexpr size_t WORDS = 0x800000 / 4;           // 8 MB of RDRAM
     constexpr auto SAMPLE_EVERY = std::chrono::seconds(10);
     constexpr int MIN_SAMPLES = 6;                    // a stage must run at least ~1 minute to be reported
-    constexpr size_t MAX_REPORT = 40;
+    constexpr size_t MAX_REPORT = 45;
+    constexpr auto REPORT_EVERY = std::chrono::minutes(3);    // also report while the stage runs
 
     std::mutex mutex;
     std::vector<uint32_t> first, prev;
     std::vector<uint16_t> ups, downs;
     int samples = 0;
     int stage = -1;
-    clock_type::time_point stage_start, first_time, last_time, next_sample;
+    clock_type::time_point stage_start, first_time, last_time, next_sample, next_report;
 
     uint32_t word(const uint8_t* rdram, size_t i) {
         // recompiler RDRAM layout: 32-bit words in host order
@@ -45,6 +46,7 @@ namespace {
         samples = 1;
         first_time = last_time = now;
         next_sample = now + SAMPLE_EVERY;
+        next_report = now + REPORT_EVERY;
     }
 
     float as_float(uint32_t v) {
@@ -63,6 +65,7 @@ namespace {
         const double secs = std::chrono::duration<double>(last_time - first_time).count();
         struct Cand { size_t i; bool up; int steps; double rate; bool f; };
         std::vector<Cand> c;
+        size_t noise = 0;
         const int need = samples - 1;                 // changed on every sample, never the other way
         for (size_t i = 0; i < WORDS; i++) {
             const int u = ups[i], d = downs[i];
@@ -73,15 +76,19 @@ namespace {
             double rate;
             if (fl) rate = ((double)as_float(b) - (double)as_float(a)) / std::max(secs, 1.0);
             else rate = ((double)(int64_t)(int32_t)b - (double)(int64_t)(int32_t)a) / std::max(secs, 1.0);
+            // known noise: audio buffer counters (~174/s) and frame counters (60/s, ~56/s)
+            const double ar = std::abs(rate);
+            if (!fl && ((ar > 165 && ar < 185) || (ar > 50 && ar < 62))) { noise++; continue; }
             c.push_back({ i, u > 0, u + d, rate, fl });
         }
         // Stack/scratch words churn; prefer the steadiest (changed every sample) and small rates first.
         std::sort(c.begin(), c.end(), [](const Cand& x, const Cand& y) {
+            if (x.up != y.up) return !x.up;                       // countdowns first
             if (x.steps != y.steps) return x.steps > y.steps;
             return std::abs(x.rate) < std::abs(y.rate);
         });
-        std::printf("[ramwatch] stage %d ran %.0f s, %d samples (%s): %zu steady counters\n",
-                    stage, std::chrono::duration<double>(last_time - stage_start).count(), samples, why, c.size());
+        std::printf("[ramwatch] stage %d ran %.0f s, %d samples (%s): %zu steady counters (+%zu audio/frame counters skipped)\n",
+                    stage, std::chrono::duration<double>(last_time - stage_start).count(), samples, why, c.size(), noise);
         for (size_t k = 0; k < c.size() && k < MAX_REPORT; k++) {
             const Cand& x = c[k];
             const uint32_t a = first[x.i], b = prev[x.i];
@@ -119,11 +126,20 @@ void hyp::ramwatch::tick(const uint8_t* rdram) {
     }
     samples++;
     last_time = now;
+    if (now >= next_report) {
+        next_report = now + REPORT_EVERY;
+        report("still running");
+    }
 }
 
-void hyp::ramwatch::stage_changed(const uint8_t* rdram, int new_stage) {
+void hyp::ramwatch::stage_changed(const uint8_t* rdram, int new_stage, int flag) {
     std::lock_guard lock{ mutex };
     const auto now = clock_type::now();
+    if (!first.empty() && new_stage == stage && flag == 1) {
+        // the same stage reloaded (walking between its areas): a day timer keeps running, keep watching
+        std::printf("[ramwatch] stage %d area change, still watching (%d samples)\n", stage, samples);
+        return;
+    }
     if (!first.empty()) report("stage changed");
     stage = new_stage;
     stage_start = now;

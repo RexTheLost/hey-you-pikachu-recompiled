@@ -7,7 +7,7 @@
 // while a stage ran, when the stage changes.
 namespace hyp::ramwatch {
     void tick(const uint8_t* rdram);                      // every game frame (game thread)
-    void stage_changed(const uint8_t* rdram, int new_stage); // from the stage-load hook
+    void stage_changed(const uint8_t* rdram, int new_stage, int flag); // from the stage-load hook
 }
 
 #endif

@@ -46,7 +46,7 @@ extern "C" void hyp_trace_stage_load(uint8_t* rdram, recomp_context* ctx) {
     current_stage = (int)ctx->r5;
     // func_80033A70(slot, stage, flag); always logged (cheap, and the live log shows the day's flow)
     std::printf("[stage] slot=%d stage=%d flag=%d\n", (int)ctx->r4, (int)ctx->r5, (int)ctx->r6);
-    hyp::ramwatch::stage_changed(rdram, (int)ctx->r5);
+    hyp::ramwatch::stage_changed(rdram, (int)ctx->r5, (int)ctx->r6);
 }
 
 extern "C" void hyp_trace_save_request(uint8_t* rdram, recomp_context* ctx) {
