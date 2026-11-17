@@ -54,3 +54,13 @@ shows the report on the next start and sends it once to the report inbox: the Cl
 `reports-worker/` (https://hyp-reports.pinball-leaderboard.workers.dev, deploy with
 `npx wrangler deploy` there; admin key `HYP_REPORT_KEY` in `D:\AI\.env`). `python tools/fetch_reports.py`
 saves waiting reports to `reports/` (gitignored) and marks them fetched; `--list` only shows them.
+
+## Automatic updates
+
+The launcher asks `https://hyp-reports.pinball-leaderboard.workers.dev/latest` on every start
+(4 s timeout; offline = no check). If the published versionCode is newer it offers Update /
+Not now; Update downloads `/apk/<versionCode>`, checks the SHA-256 and installs through
+Android's PackageInstaller (the player confirms; the first time Android asks to allow
+"Install unknown apps" for the game). Android only accepts an APK signed with the same key
+(the Godot debug keystore every build uses). Publish a build after packaging with
+`python tools/publish_android.py "what changed"` (bump versionCode in AndroidManifest.xml first).

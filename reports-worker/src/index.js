@@ -7,6 +7,10 @@
 //   GET  /reports?key=ADMIN_KEY            -> {"reports": [...]} not fetched yet
 //   POST /reports/N/fetched?key=ADMIN_KEY  -> marks one fetched
 //
+// Updates (tools/publish_android.py puts the files in the BUILDS KV namespace):
+//   GET  /latest           -> {"versionCode", "versionName", "sha256", "size", "notes"} or 404
+//   GET  /apk/<versionCode> -> the APK
+//
 // Deploy from this folder: npx wrangler deploy. Secret: ADMIN_KEY.
 import { DurableObject } from "cloudflare:workers";
 
@@ -20,6 +24,24 @@ export default {
 		const url = new URL(request.url);
 		if (url.pathname === "/") {
 			return new Response("Hey You, Pikachu Android report inbox.\n");
+		}
+		if (url.pathname === "/latest" && request.method === "GET") {
+			const latest = await env.BUILDS.get("latest");
+			if (!latest) {
+				return new Response("No build published yet", { status: 404 });
+			}
+			return new Response(latest, { headers: { "Content-Type": "application/json", "Cache-Control": "no-store" } });
+		}
+		const apk = url.pathname.match(/^\/apk\/(\d+)$/);
+		if (apk && request.method === "GET") {
+			const body = await env.BUILDS.get("apk:" + apk[1], { type: "stream" });
+			if (!body) {
+				return new Response("Not found", { status: 404 });
+			}
+			return new Response(body, { headers: {
+				"Content-Type": "application/vnd.android.package-archive",
+				"Content-Disposition": `attachment; filename="HeyYouPikachu-${apk[1]}.apk"`,
+			} });
 		}
 		if (url.pathname === "/report" && request.method === "POST") {
 			if (request.headers.get("X-HYP-App") !== "hyp-android") {

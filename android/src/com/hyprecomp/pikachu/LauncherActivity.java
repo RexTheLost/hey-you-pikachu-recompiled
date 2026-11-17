@@ -93,7 +93,24 @@ public class LauncherActivity extends Activity {
             file(CRASH).renameTo(file("data/crash_last.txt"));
         }
         if (file(CRASH).exists()) showCrash();
-        else if (!showUnexpectedExit()) next();
+        else if (!showUnexpectedExit()) {
+            text.setText("Checking for updates...");
+            updater.check(this::next);
+        }
+    }
+
+    private final Updater updater = new Updater(this, this::next);
+
+    @Override
+    protected void onResume() {
+        super.onResume();
+        updater.onResume();
+    }
+
+    @Override
+    protected void onDestroy() {
+        updater.release();
+        super.onDestroy();
     }
 
     /**
