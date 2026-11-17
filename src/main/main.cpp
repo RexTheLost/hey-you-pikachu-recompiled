@@ -536,6 +536,9 @@ int main(int argc, char** argv) {
     std::filesystem::create_directories(data_dir);
 #ifdef __ANDROID__
     hyp::android::install_crash_report(data_dir);
+    // Android sets no HOME; RT64 keeps its settings in $HOME/.rt64 and fell back to /data
+    // (not writable: it crashed creating the folder). Use the app's own storage.
+    setenv("HOME", program_dir().string().c_str(), 1);
 #endif
     hyp::settings::load(data_dir);
 
