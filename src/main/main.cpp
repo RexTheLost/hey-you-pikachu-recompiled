@@ -358,8 +358,13 @@ namespace {
         spec_desired.freq = (int)output_sample_rate;
         spec_desired.format = AUDIO_F32;
         spec_desired.channels = (Uint8)output_channels;
+#ifdef __ANDROID__
+        spec_desired.samples = 0x400; // ~21 ms per device buffer: phones schedule the audio thread less tightly
+#else
         spec_desired.samples = 0x100;
-        SDL_AudioDeviceID device = SDL_OpenAudioDevice(name.empty() ? nullptr : name.c_str(), false, &spec_desired, nullptr, 0);
+#endif
+        SDL_AudioSpec spec_obtained{};
+        SDL_AudioDeviceID device = SDL_OpenAudioDevice(name.empty() ? nullptr : name.c_str(), false, &spec_desired, &spec_obtained, 0);
         if (device == 0) {
             std::fprintf(stderr, "Could not open audio device '%s': %s\n", name.c_str(), SDL_GetError());
             return false;
@@ -369,6 +374,7 @@ namespace {
             if (audio_device != 0) SDL_CloseAudioDevice(audio_device);
             audio_device = device;
         }
+        std::printf("[audio] output open: %d Hz, %d channels, %d frames per buffer\n", spec_obtained.freq, spec_obtained.channels, spec_obtained.samples);
         SDL_PauseAudioDevice(device, 0);
         return true;
     }
@@ -588,7 +594,14 @@ int main(int argc, char** argv) {
     hyp::settings::load(data_dir);
 
     std::printf("[start] settings loaded, opening audio\n");
+#ifdef __ANDROID__
+    // SDL 2.30's AAudio output drops whatever the stream can't take within 1 ms, so the queue
+    // drained instantly and the sound crackled (logs: "queue empty" on every update). OpenSL ES
+    // paces SDL's audio thread properly; the Java AudioTrack and AAudio drivers are fallbacks.
+    SDL_SetHint(SDL_HINT_AUDIODRIVER, "openslES,android,aaudio");
+#endif
     SDL_InitSubSystem(SDL_INIT_AUDIO);
+    std::printf("[start] audio driver: %s\n", SDL_GetCurrentAudioDriver() ? SDL_GetCurrentAudioDriver() : "(none)");
     reset_audio(48000);
     std::printf("[start] audio open\n");
     {
