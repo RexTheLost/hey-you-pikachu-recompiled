@@ -96,9 +96,9 @@ namespace {
         }
     }
 
-    void SDLCALL capture_callback(void*, Uint8* stream, int len) {
-        const float* s = reinterpret_cast<const float*>(stream);
-        size_t n = (size_t)len / sizeof(float);
+    std::atomic_bool java_restart{ false }; // Android: ask the app's AudioRecord to restart
+
+    void feed_samples(const float* s, size_t n) {
         std::lock_guard lock{ mutex };
         for (size_t i = 0; i < n; i++) {
             preroll.push_back(s[i]);
@@ -119,7 +119,19 @@ namespace {
         }
     }
 
+    void SDLCALL capture_callback(void*, Uint8* stream, int len) {
+        feed_samples(reinterpret_cast<const float*>(stream), (size_t)len / sizeof(float));
+    }
+
     void open_device() {
+#ifdef __ANDROID__
+        // Android: the app records with its own AudioRecord (voice-recognition source, stopped while
+        // the app is in the background) and feeds us through mic_feed. SDL's capture device is not
+        // used: its pause/resume handling raced with reopening it.
+        device = 1;
+        hyp::vru::voice_log("[mic] Android: audio comes from the app's recorder\n");
+        return;
+#endif
         if (device != 0) SDL_CloseAudioDevice(device);
         SDL_AudioSpec want{};
         want.freq = rate;
@@ -141,6 +153,12 @@ namespace {
 
     // Close and reopen the capture device; call WITHOUT holding the lock.
     void reopen_device(const std::string& name) {
+#ifdef __ANDROID__
+        (void)name;
+        java_restart = true;
+        hyp::vru::voice_log("[mic] asked the app to restart its recorder\n");
+        return;
+#endif
         SDL_AudioDeviceID old = device;
         if (old != 0) SDL_CloseAudioDevice(old);
         SDL_AudioSpec want{};
@@ -320,7 +338,10 @@ void hyp::vru::mic_init(const std::filesystem::path& model_path, const std::stri
     {
         // model: <exe>/data/models/x.bin -> log: <exe>/data/voice.log
         std::lock_guard lock{ log_mutex };
-        voice_log_file = std::fopen((model_path.parent_path().parent_path() / "voice.log").string().c_str(), "w");
+        auto log_path = model_path.parent_path().parent_path() / "voice.log";
+        std::error_code ec;
+        std::filesystem::rename(log_path, log_path.parent_path() / "voice_prev.log", ec); // keep the last session's
+        voice_log_file = std::fopen(log_path.string().c_str(), "w");
     }
     {
         std::lock_guard lock{ mutex };
@@ -353,6 +374,14 @@ void hyp::vru::mic_set_device(const std::string& microphone) {
         open_device();
         status = device != 0 ? MicStatus::Ready : MicStatus::NoMicrophone;
     }
+}
+
+void hyp::vru::mic_feed(const float* samples, size_t count) {
+    feed_samples(samples, count);
+}
+
+bool hyp::vru::mic_take_restart() {
+    return java_restart.exchange(false);
 }
 
 void hyp::vru::mic_reopen() {

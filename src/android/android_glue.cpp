@@ -36,6 +36,18 @@ void hyp::touch::stick(float* x, float* y) {
 
 extern "C" {
 
+// Microphone audio from the app's AudioRecord (16 kHz mono float).
+JNIEXPORT void JNICALL Java_com_hyprecomp_pikachu_HypNative_micFeed(JNIEnv* env, jclass, jfloatArray data, jint count) {
+    jfloat* s = env->GetFloatArrayElements(data, nullptr);
+    if (s == nullptr) return;
+    hyp::vru::mic_feed(s, (size_t)count);
+    env->ReleaseFloatArrayElements(data, s, JNI_ABORT);
+}
+
+JNIEXPORT jboolean JNICALL Java_com_hyprecomp_pikachu_HypNative_takeMicRestart(JNIEnv*, jclass) {
+    return hyp::vru::mic_take_restart() ? JNI_TRUE : JNI_FALSE;
+}
+
 JNIEXPORT void JNICALL Java_com_hyprecomp_pikachu_HypNative_setButtons(JNIEnv*, jclass, jint buttons) {
     touch_buttons = (uint32_t)buttons;
 }

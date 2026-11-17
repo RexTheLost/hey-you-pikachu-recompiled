@@ -20,4 +20,8 @@ public final class HypNative {
     /** 0 loading, 1 ready, 2 no model, 3 no microphone */
     public static native int getMicStatus();
     public static native boolean isListening();
+    /** Microphone audio (16 kHz mono) for the speech recognizer. */
+    public static native void micFeed(float[] data, int count);
+    /** The recognizer got pure silence and wants the recorder restarted. */
+    public static native boolean takeMicRestart();
 }

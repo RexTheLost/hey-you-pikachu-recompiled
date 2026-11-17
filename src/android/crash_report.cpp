@@ -133,6 +133,8 @@ namespace hyp::android {
     void install_crash_report(const std::filesystem::path& data_dir) {
         std::filesystem::create_directories(data_dir);
         std::string log = (data_dir / "log.txt").string();
+        std::error_code ec;
+        std::filesystem::rename(data_dir / "log.txt", data_dir / "log_prev.txt", ec); // keep the last session's
         if (std::freopen(log.c_str(), "w", stdout) != nullptr) {
             dup2(fileno(stdout), STDERR_FILENO);
             std::setvbuf(stdout, nullptr, _IONBF, 0);

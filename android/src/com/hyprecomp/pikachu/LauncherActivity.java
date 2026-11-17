@@ -93,7 +93,54 @@ public class LauncherActivity extends Activity {
             file(CRASH).renameTo(file("data/crash_last.txt"));
         }
         if (file(CRASH).exists()) showCrash();
-        else next();
+        else if (!showUnexpectedExit()) next();
+    }
+
+    /**
+     * Android 11+: if the game's process ended abnormally last time without a crash report (killed
+     * for memory, not responding, killed by a signal...), say why and offer the logs. Once per exit.
+     */
+    private boolean showUnexpectedExit() {
+        if (android.os.Build.VERSION.SDK_INT < 30) return false;
+        try {
+            android.app.ActivityManager am = (android.app.ActivityManager) getSystemService(ACTIVITY_SERVICE);
+            List<android.app.ApplicationExitInfo> exits = am.getHistoricalProcessExitReasons(getPackageName(), 0, 1);
+            if (exits.isEmpty()) return false;
+            android.app.ApplicationExitInfo e = exits.get(0);
+            long seen = getPreferences(MODE_PRIVATE).getLong("seen_exit", 0);
+            if (e.getTimestamp() <= seen || e.getTimestamp() < installedAt()) return false;
+            getPreferences(MODE_PRIVATE).edit().putLong("seen_exit", e.getTimestamp()).apply();
+            String why;
+            switch (e.getReason()) {
+                case android.app.ApplicationExitInfo.REASON_LOW_MEMORY: why = "Android closed it to free memory"; break;
+                case android.app.ApplicationExitInfo.REASON_ANR: why = "Android closed it because it stopped responding"; break;
+                case android.app.ApplicationExitInfo.REASON_CRASH: why = "it crashed (Java)"; break;
+                case android.app.ApplicationExitInfo.REASON_CRASH_NATIVE: why = "it crashed (native)"; break;
+                case android.app.ApplicationExitInfo.REASON_SIGNALED: why = "it was killed by signal " + e.getStatus(); break;
+                case android.app.ApplicationExitInfo.REASON_EXCESSIVE_RESOURCE_USAGE: why = "Android closed it for using too much power or CPU"; break;
+                case android.app.ApplicationExitInfo.REASON_PERMISSION_CHANGE: why = "a permission was changed"; break;
+                case android.app.ApplicationExitInfo.REASON_INITIALIZATION_FAILURE: why = "it failed to start"; break;
+                case android.app.ApplicationExitInfo.REASON_DEPENDENCY_DIED: why = "something it depended on stopped"; break;
+                case android.app.ApplicationExitInfo.REASON_OTHER: why = "Android closed it (other reason)"; break;
+                default: return false;                      // closed normally (by the player or the game)
+            }
+            StringBuilder r = new StringBuilder();
+            r.append("Pikachu Android exit report (version ").append(versionName()).append(", Android ")
+                .append(android.os.Build.VERSION.RELEASE).append(", ").append(android.os.Build.MODEL).append(")\n");
+            r.append("closed ").append(android.text.format.DateFormat.format("yyyy-MM-dd HH:mm:ss", e.getTimestamp()))
+                .append(": ").append(why).append("\n");
+            r.append("reason ").append(e.getReason()).append(", status ").append(e.getStatus())
+                .append(", importance ").append(e.getImportance())
+                .append(", memory ").append(e.getPss() / 1024).append(" MB (pss) / ").append(e.getRss() / 1024).append(" MB (rss)\n");
+            if (e.getDescription() != null) r.append("description: ").append(e.getDescription()).append("\n");
+            r.append("\n--- game log ---\n").append(readText(file(LOG), 6000));
+            r.append("\n--- voice log ---\n").append(readText(file("data/voice.log"), 3000));
+            showReport("The game closed unexpectedly last time: " + why + ". Tap Copy report and paste it to Claude.",
+                r.toString(), this::recreate);
+            return true;
+        } catch (Exception ex) {
+            return false;
+        }
     }
 
     static final String CRASH = "data/crash.txt", LOG = "data/log.txt";
@@ -108,13 +155,20 @@ public class LauncherActivity extends Activity {
             .append("\n\n");
         r.append(readText(file(CRASH), 12000));
         r.append("\n--- log ---\n").append(readText(file(LOG), 6000));
-        final String report = r.toString();
+        showReport("The game crashed last time. Tap Copy report and paste it to Claude.", r.toString(), () -> {
+            file(CRASH).renameTo(file("data/crash_last.txt"));
+            recreate();
+        });
+    }
+
+    /** A report screen with Copy report and Start the game. */
+    private void showReport(String headline, final String report, final Runnable start) {
         LinearLayout box = new LinearLayout(this);
         box.setOrientation(LinearLayout.VERTICAL);
         box.setBackgroundColor(Color.rgb(250, 214, 60));
         box.setPadding(32, 24, 32, 24);
         TextView head = new TextView(this);
-        head.setText("The game crashed last time. Tap Copy report and paste it to Claude.");
+        head.setText(headline);
         head.setTextSize(18);
         head.setTextColor(Color.rgb(60, 40, 10));
         box.addView(head);
@@ -129,10 +183,7 @@ public class LauncherActivity extends Activity {
         row.addView(copy);
         Button go = new Button(this);
         go.setText("Start the game");
-        go.setOnClickListener(v -> {
-            file(CRASH).renameTo(file("data/crash_last.txt"));
-            recreate();
-        });
+        go.setOnClickListener(v -> start.run());
         row.addView(go);
         box.addView(row);
         ScrollView sv = new ScrollView(this);

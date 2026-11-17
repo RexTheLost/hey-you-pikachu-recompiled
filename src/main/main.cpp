@@ -291,6 +291,22 @@ namespace {
         // The SDL queue holds converted audio: float frames of output_channels at output_sample_rate.
         uint64_t cur_queued_microseconds = uint64_t(SDL_GetQueuedAudioSize(audio_device)) /
                                            (output_channels * sizeof(float)) * 1000000 / output_sample_rate;
+        // Diagnostics for crackling: count how often the queue ran dry (log every 30 s if it did).
+        {
+            static uint32_t empty_count = 0, low_count = 0, calls = 0;
+            static auto window_start = std::chrono::steady_clock::now();
+            calls++;
+            if (cur_queued_microseconds == 0) empty_count++;
+            else if (cur_queued_microseconds < 10000) low_count++;
+            auto now = std::chrono::steady_clock::now();
+            if (now - window_start > std::chrono::seconds(30)) {
+                if (empty_count + low_count > 0) {
+                    std::printf("[audio] last 30 s: queue empty %u times, under 10 ms %u times (of %u updates)\n", empty_count, low_count, calls);
+                }
+                empty_count = low_count = calls = 0;
+                window_start = now;
+            }
+        }
         uint32_t num_bytes_to_queue = audio_convert.len_cvt - output_channels * discarded_output_frames * sizeof(swap_buffer[0]);
         float* samples_to_queue = swap_buffer.data() + output_channels * discarded_output_frames / 2;
 
@@ -389,7 +405,6 @@ namespace {
                 std::printf("[app] back in the foreground: game resumed\n");
                 if (audio_device != 0) SDL_PauseAudioDevice(audio_device, 0);
                 ultramodern::set_paused(false);
-                hyp::vru::mic_reopen(); // Android hands background apps a silent microphone; start fresh
                 break;
         }
         return 1;

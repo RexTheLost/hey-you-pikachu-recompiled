@@ -55,6 +55,8 @@ namespace hyp::vru {
     void mic_set_device(const std::string& microphone); // "" = system default
     MicStatus mic_status();
     void mic_reopen();         // reopen the microphone (e.g. back from the background)
+    void mic_feed(const float* samples, size_t count); // 16 kHz mono audio from the app (Android)
+    bool mic_take_restart();   // Android: the app should restart its recorder (clears the request)
     void mic_listen_start();   // game started listening (not for a picked word)
     void mic_listen_stop();    // game stopped listening
     // Called with the player's own talk button (Z) every input poll; returns true

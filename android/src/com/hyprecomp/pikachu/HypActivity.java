@@ -17,6 +17,22 @@ import java.util.List;
 /** The game: SDL's activity (it runs libmain.so) with the on-screen controls laid over it. */
 public class HypActivity extends SDLActivity {
     private ControlsView controls;
+    private final MicRecorder mic = new MicRecorder();
+
+    @Override
+    protected void onResume() {
+        super.onResume();
+        if (!mBrokenLibraries && checkSelfPermission(android.Manifest.permission.RECORD_AUDIO)
+                == android.content.pm.PackageManager.PERMISSION_GRANTED) {
+            mic.start();
+        }
+    }
+
+    @Override
+    protected void onPause() {
+        mic.stop();
+        super.onPause();
+    }
 
     @Override
     protected String[] getLibraries() {
@@ -107,7 +123,7 @@ public class HypActivity extends SDLActivity {
                 if (w != null) HypNative.sayWord(w);
                 else showWords();                          // header tapped: keep the list open
             })
-            .setNeutralButton("Copy voice log", (d, which) -> copyVoiceLog())
+            .setNeutralButton("Copy logs", (d, which) -> copyVoiceLog())
             .setNegativeButton("Close", null)
             .show();
     }
@@ -116,14 +132,13 @@ public class HypActivity extends SDLActivity {
     void copyVoiceLog() {
         String text;
         try {
-            byte[] all = java.nio.file.Files.readAllBytes(new java.io.File(getFilesDir(), "data/voice.log").toPath());
-            int from = Math.max(0, all.length - 6000);
-            text = "voice log (" + LauncherActivity.class.getPackage().getName() + ")\n" + new String(all, from, all.length - from, "UTF-8");
+            text = "voice log:\n" + LauncherActivity.readText(new java.io.File(getFilesDir(), "data/voice.log"), 5000)
+                + "\n--- game log ---\n" + LauncherActivity.readText(new java.io.File(getFilesDir(), LauncherActivity.LOG), 5000);
         } catch (Exception e) {
             text = "no voice log: " + e;
         }
         android.content.ClipboardManager cm = (android.content.ClipboardManager) getSystemService(CLIPBOARD_SERVICE);
         cm.setPrimaryClip(android.content.ClipData.newPlainText("voice log", text));
-        android.widget.Toast.makeText(this, "Voice log copied", android.widget.Toast.LENGTH_SHORT).show();
+        android.widget.Toast.makeText(this, "Logs copied", android.widget.Toast.LENGTH_SHORT).show();
     }
 }
