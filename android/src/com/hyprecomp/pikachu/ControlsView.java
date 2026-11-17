@@ -277,6 +277,8 @@ public class ControlsView extends View {
             c.drawText(msg, getWidth() / 2f, 0.925f * h, banner);
         }
 
+        if (LiveLog.on && !status.endsWith("LIVE")) status = status + "   LIVE";
+        if (!LiveLog.on && status.endsWith("   LIVE")) status = status.substring(0, status.length() - 7);
         if (!status.isEmpty()) {                          // clock + battery, top-left corner
             statusPaint.setTextSize(0.042f * h);
             statusPaint.setFakeBoldText(true);

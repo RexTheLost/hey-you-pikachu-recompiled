@@ -7,6 +7,12 @@
 //   GET  /reports?key=ADMIN_KEY            -> {"reports": [...]} not fetched yet
 //   POST /reports/N/fetched?key=ADMIN_KEY  -> marks one fetched
 //
+// Live log (switched on in the game's Words list; tools/live_log.py follows it):
+//   POST /live   {"session", "text"}                      header X-HYP-App: hyp-android
+//   POST /clip?session=S&name=N   body: a WAV of one Talk recording
+//   GET  /live?key=ADMIN_KEY&after=ID   -> {"lines": [{id, at, session, text}], "clips": [{id, at, session, name, size}]}
+//   GET  /clip/ID?key=ADMIN_KEY         -> the WAV
+//
 // Updates (tools/publish_android.py puts the files in the BUILDS KV namespace):
 //   GET  /latest           -> {"versionCode", "versionName", "sha256", "size", "notes"} or 404
 //   GET  /apk/<versionCode> -> the APK
@@ -18,6 +24,10 @@ const MAX_TEXT = 60000;        // characters per report (crash report + log tail
 const PER_SENDER_HOUR = 10;    // reports one address may send in an hour
 const ALL_HOUR = 200;          // reports the inbox takes in an hour, from everyone
 const KEEP_DAYS = 90;          // fetched reports are deleted after this
+const LIVE_PER_MINUTE = 40;    // live log + clip posts one address may make in a minute
+const LIVE_MAX_TEXT = 20000;   // characters per live log post
+const CLIP_MAX = 400000;       // bytes per clip (about 12 s of 16 kHz mono 16-bit)
+const LIVE_KEEP_DAYS = 7;      // live logs and clips are deleted after this
 
 export default {
 	async fetch(request, env) {
@@ -43,6 +53,30 @@ export default {
 				"Content-Disposition": `attachment; filename="HeyYouPikachu-${apk[1]}.apk"`,
 			} });
 		}
+		if ((url.pathname === "/live" || url.pathname === "/clip") && request.method === "POST") {
+			if (request.headers.get("X-HYP-App") !== "hyp-android") {
+				return new Response("Not found", { status: 404 });
+			}
+			const sender = await hash(request.headers.get("CF-Connecting-IP") || "unknown");
+			const inbox = env.REPORTS.getByName("inbox");
+			let result;
+			if (url.pathname === "/live") {
+				let body;
+				try {
+					body = await request.json();
+				} catch (e) {
+					return Response.json({ ok: false, error: "bad body" }, { status: 400 });
+				}
+				result = await inbox.addLive(clean(body.session, 40), clean(body.text, LIVE_MAX_TEXT), sender);
+			} else {
+				const bytes = new Uint8Array(await request.arrayBuffer());
+				if (bytes.length === 0 || bytes.length > CLIP_MAX) {
+					return Response.json({ ok: false, error: "bad clip size" }, { status: 400 });
+				}
+				result = await inbox.addClip(clean(url.searchParams.get("session"), 40), clean(url.searchParams.get("name"), 120), bytes, sender);
+			}
+			return Response.json(result, { status: result.ok ? 200 : (result.status || 400) });
+		}
 		if (url.pathname === "/report" && request.method === "POST") {
 			if (request.headers.get("X-HYP-App") !== "hyp-android") {
 				return new Response("Not found", { status: 404 });
@@ -56,6 +90,24 @@ export default {
 			const sender = await hash(request.headers.get("CF-Connecting-IP") || "unknown");
 			const result = await env.REPORTS.getByName("inbox").add(report, sender);
 			return Response.json(result, { status: result.ok ? 200 : (result.status || 400) });
+		}
+		if (url.pathname === "/live" && request.method === "GET") {
+			if (!env.ADMIN_KEY || url.searchParams.get("key") !== env.ADMIN_KEY) {
+				return new Response("Not found", { status: 404 });
+			}
+			const after = Number(url.searchParams.get("after") || 0);
+			return Response.json(await env.REPORTS.getByName("inbox").liveAfter(after));
+		}
+		const clip = url.pathname.match(/^\/clip\/(\d+)$/);
+		if (clip && request.method === "GET") {
+			if (!env.ADMIN_KEY || url.searchParams.get("key") !== env.ADMIN_KEY) {
+				return new Response("Not found", { status: 404 });
+			}
+			const data = await env.REPORTS.getByName("inbox").clipData(Number(clip[1]));
+			if (!data) {
+				return new Response("Not found", { status: 404 });
+			}
+			return new Response(data, { headers: { "Content-Type": "audio/wav" } });
 		}
 		if (url.pathname === "/reports" || url.pathname.startsWith("/reports/")) {
 			if (!env.ADMIN_KEY || url.searchParams.get("key") !== env.ADMIN_KEY) {
@@ -93,6 +145,9 @@ export class Reports extends DurableObject {
 				id INTEGER PRIMARY KEY AUTOINCREMENT, at INTEGER NOT NULL, kind TEXT NOT NULL,
 				version TEXT NOT NULL, device TEXT NOT NULL, text TEXT NOT NULL,
 				sender TEXT NOT NULL, fetched INTEGER NOT NULL DEFAULT 0)`);
+			this.ctx.storage.sql.exec(`CREATE TABLE IF NOT EXISTS live (
+				id INTEGER PRIMARY KEY AUTOINCREMENT, at INTEGER NOT NULL, session TEXT NOT NULL,
+				kind TEXT NOT NULL, name TEXT NOT NULL, text TEXT NOT NULL, data BLOB, sender TEXT NOT NULL)`);
 		});
 	}
 
@@ -114,6 +169,42 @@ export class Reports extends DurableObject {
 			"INSERT INTO reports (at, kind, version, device, text, sender) VALUES (?, ?, ?, ?, ?, ?) RETURNING id",
 			now, kind, clean(report.version, 60), clean(report.device, 120), text, sender).one().id;
 		return { ok: true, id };
+	}
+
+	liveAllowed(sender) {
+		const minuteAgo = Date.now() - 60 * 1000;
+		const n = this.ctx.storage.sql.exec("SELECT COUNT(*) AS n FROM live WHERE sender = ? AND at > ?", sender, minuteAgo).one().n;
+		return n < LIVE_PER_MINUTE;
+	}
+
+	async addLive(session, text, sender) {
+		if (!text) return { ok: true };
+		if (!this.liveAllowed(sender)) return { ok: false, status: 429, error: "slow down" };
+		const now = Date.now();
+		this.ctx.storage.sql.exec("DELETE FROM live WHERE at < ?", now - LIVE_KEEP_DAYS * 86400 * 1000);
+		const id = this.ctx.storage.sql.exec("INSERT INTO live (at, session, kind, name, text, data, sender) VALUES (?, ?, 'log', '', ?, NULL, ?) RETURNING id",
+			now, session, text, sender).one().id;
+		return { ok: true, id };
+	}
+
+	async addClip(session, name, bytes, sender) {
+		if (!this.liveAllowed(sender)) return { ok: false, status: 429, error: "slow down" };
+		const id = this.ctx.storage.sql.exec("INSERT INTO live (at, session, kind, name, text, data, sender) VALUES (?, ?, 'clip', ?, '', ?, ?) RETURNING id",
+			Date.now(), session, name, bytes.buffer, sender).one().id;
+		return { ok: true, id };
+	}
+
+	async liveAfter(after) {
+		const rows = this.ctx.storage.sql.exec("SELECT id, at, session, kind, name, text, length(data) AS size FROM live WHERE id > ? ORDER BY id LIMIT 500", after).toArray();
+		return {
+			lines: rows.filter((r) => r.kind === "log").map((r) => ({ id: r.id, at: r.at, session: r.session, text: r.text })),
+			clips: rows.filter((r) => r.kind === "clip").map((r) => ({ id: r.id, at: r.at, session: r.session, name: r.name, size: r.size })),
+		};
+	}
+
+	async clipData(id) {
+		const rows = this.ctx.storage.sql.exec("SELECT data FROM live WHERE id = ? AND kind = 'clip'", id).toArray();
+		return rows.length ? rows[0].data : null;
 	}
 
 	async waiting() {

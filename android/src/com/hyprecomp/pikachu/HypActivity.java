@@ -108,6 +108,12 @@ public class HypActivity extends SDLActivity {
                 else showWords();                          // header tapped: keep the list open
             })
             .setNeutralButton("Send logs to Claude", (d, which) -> sendLogs())
+            .setPositiveButton(LiveLog.on ? "Live log: ON" : "Live log: off", (d, which) -> {
+                if (LiveLog.on) LiveLog.stop(); else LiveLog.start(this);
+                android.widget.Toast.makeText(this, LiveLog.on
+                    ? "Live log on: the game log and your Talk recordings go to Claude until you turn it off"
+                    : "Live log off", android.widget.Toast.LENGTH_LONG).show();
+            })
             .setNegativeButton("Close", null)
             .show();
     }

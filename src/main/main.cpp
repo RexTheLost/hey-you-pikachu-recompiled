@@ -269,9 +269,9 @@ namespace {
         }
         // Swap channels to undo the address xor from endianness handling.
         const float scale = audio_volume.load() * (0.5f / 32768.0f);
-        // Ducking while the player talks (Android): glide to 10% and back across each buffer, no clicks.
+        // Muting while the player talks (Android): glide to silence and back across each buffer, no clicks.
         static float duck_gain = 1.0f;
-        const float duck_target = hyp::vru::mic_duck_audio() ? 0.1f : 1.0f;
+        const float duck_target = hyp::vru::mic_duck_audio() ? 0.0f : 1.0f; // muted: any leak was "heard" as words
         const float duck_start = duck_gain;
         const float duck_step = (duck_target > duck_start ? 0.06f : -0.45f); // fade out fast (~2 buffers), back in gently (~100 ms)
         float duck_end = duck_start + duck_step;

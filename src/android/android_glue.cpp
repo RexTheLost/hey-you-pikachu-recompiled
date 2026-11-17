@@ -44,6 +44,17 @@ JNIEXPORT void JNICALL Java_com_hyprecomp_pikachu_HypNative_micFeed(JNIEnv* env,
     env->ReleaseFloatArrayElements(data, s, JNI_ABORT);
 }
 
+// Live log: keep each Talk recording as a WAV in this folder (null/empty = stop).
+JNIEXPORT void JNICALL Java_com_hyprecomp_pikachu_HypNative_setClipDir(JNIEnv* env, jclass, jstring dir) {
+    std::string d;
+    if (dir != nullptr) {
+        const char* s = env->GetStringUTFChars(dir, nullptr);
+        d = s ? s : "";
+        if (s) env->ReleaseStringUTFChars(dir, s);
+    }
+    hyp::vru::mic_set_clip_dir(d);
+}
+
 JNIEXPORT jboolean JNICALL Java_com_hyprecomp_pikachu_HypNative_takeMicRestart(JNIEnv*, jclass) {
     return hyp::vru::mic_take_restart() ? JNI_TRUE : JNI_FALSE;
 }

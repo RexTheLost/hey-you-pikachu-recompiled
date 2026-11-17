@@ -196,9 +196,16 @@ namespace {
     }
 
     // Troubleshooting: HYP_MIC_SAVE=<folder> keeps every utterance as a WAV file.
+    std::mutex clip_dir_mutex;
+    std::string clip_dir = std::getenv("HYP_MIC_SAVE") ? std::getenv("HYP_MIC_SAVE") : ""; // "" = don't keep clips
+
     void save_clip(const std::vector<float>& audio, const std::string& text) {
-        static const char* dir = std::getenv("HYP_MIC_SAVE");
-        if (dir == nullptr) return;
+        std::string dir;
+        {
+            std::lock_guard lock{ clip_dir_mutex };
+            dir = clip_dir;
+        }
+        if (dir.empty()) return;
         static int count = 0;
         std::string name;
         for (char c : text) if (std::isalnum((unsigned char)c) || c == ' ') name += c == ' ' ? '_' : c;
@@ -291,7 +298,14 @@ namespace {
             bool blank = std::none_of(r.text.begin(), r.text.end(), [](char c) { return std::isalnum((unsigned char)c); });
             // Whisper makes up words from room noise (it once heard "I hate you."). If the
             // voice detector never fired, only trust a transcript whisper is sure of.
-            if (!blank && r.no_speech > (had_voice ? 0.8f : 0.3f)) {
+#ifdef __ANDROID__
+            // Phones: the game is muted while Talk is held, so a recording in which the voice detector
+            // never fired is room noise; whisper invents words for it ("I hate you." from 2 s of silence).
+            const float no_speech_limit = had_voice ? 0.8f : -1.0f;
+#else
+            const float no_speech_limit = had_voice ? 0.8f : 0.3f;
+#endif
+            if (!blank && r.no_speech > no_speech_limit) {
                 hyp::vru::voice_log("[mic] ignored \"%s\" (probably noise: no-speech %.2f, voice detected: %s)\n",
                                     r.text.c_str(), r.no_speech, had_voice ? "yes" : "no");
                 blank = true;
@@ -481,6 +495,12 @@ bool hyp::vru::mic_talk_update(bool talk_pressed) {
     // into the recording and were "heard" as words. Turn the game down while Talk is held.
     duck_audio = talk_pressed || state == State::Recording;
     return state != State::Idle;
+}
+
+void hyp::vru::mic_set_clip_dir(const std::string& dir) {
+    std::lock_guard lock{ clip_dir_mutex };
+    clip_dir = dir;
+    hyp::vru::voice_log("[mic] keeping recordings: %s\n", dir.empty() ? "no" : "yes (live log)");
 }
 
 bool hyp::vru::mic_duck_audio() {

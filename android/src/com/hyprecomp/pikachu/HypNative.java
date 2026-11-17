@@ -24,4 +24,6 @@ public final class HypNative {
     public static native void micFeed(float[] data, int count);
     /** The recognizer got pure silence and wants the recorder restarted. */
     public static native boolean takeMicRestart();
+    /** Live log: keep each Talk recording as a WAV in this folder (null = stop). */
+    public static native void setClipDir(String dir);
 }
