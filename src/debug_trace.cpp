@@ -1,5 +1,6 @@
 // Tracing hooks injected into recompiled functions via hyp.recomp.toml
 // [[patches.hook]] entries. Silent unless HYP_TRACE is set in the environment.
+#include "hyp_ramwatch.h"
 #include "hyp_control.h"
 #include <chrono>
 #include <cstdio>
@@ -43,9 +44,9 @@ extern "C" void hyp_trace_decompress(uint8_t* rdram, recomp_context* ctx) {
 
 extern "C" void hyp_trace_stage_load(uint8_t* rdram, recomp_context* ctx) {
     current_stage = (int)ctx->r5;
-    if (!hyp_trace_enabled()) return;
-    // func_80033A70(slot, stage, flag)
+    // func_80033A70(slot, stage, flag); always logged (cheap, and the live log shows the day's flow)
     std::printf("[stage] slot=%d stage=%d flag=%d\n", (int)ctx->r4, (int)ctx->r5, (int)ctx->r6);
+    hyp::ramwatch::stage_changed(rdram, (int)ctx->r5);
 }
 
 extern "C" void hyp_trace_save_request(uint8_t* rdram, recomp_context* ctx) {
@@ -63,6 +64,7 @@ extern "C" void func_80032D44(uint8_t* rdram, recomp_context* ctx);
 extern "C" void hyp_force_save_check(uint8_t* rdram, recomp_context* ctx) {
     // This hook runs once per game frame on the game thread: also the motion player's tick.
     hyp::motion::game_tick(rdram, ctx);
+    hyp::ramwatch::tick(rdram);
     static const char* env = std::getenv("HYP_FORCE_SAVE_AT");
     static bool done = false;
     static const auto start = std::chrono::steady_clock::now();

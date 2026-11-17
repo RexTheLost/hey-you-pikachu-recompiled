@@ -109,6 +109,7 @@ target_sources(HeyYouPikachuRecompiled PRIVATE
     ${CMAKE_SOURCE_DIR}/src/game/input.cpp
     ${CMAKE_SOURCE_DIR}/src/runtime_gaps.cpp
     ${CMAKE_SOURCE_DIR}/src/debug_trace.cpp
+    ${CMAKE_SOURCE_DIR}/src/ram_watch.cpp
     ${CMAKE_SOURCE_DIR}/src/debug_control.cpp
     ${CMAKE_SOURCE_DIR}/src/settings.cpp
     ${CMAKE_SOURCE_DIR}/src/motion_player.cpp
