@@ -107,7 +107,23 @@ public class HypActivity extends SDLActivity {
                 if (w != null) HypNative.sayWord(w);
                 else showWords();                          // header tapped: keep the list open
             })
+            .setNeutralButton("Copy voice log", (d, which) -> copyVoiceLog())
             .setNegativeButton("Close", null)
             .show();
+    }
+
+    /** Puts the end of data/voice.log on the clipboard, to paste into a bug report. */
+    void copyVoiceLog() {
+        String text;
+        try {
+            byte[] all = java.nio.file.Files.readAllBytes(new java.io.File(getFilesDir(), "data/voice.log").toPath());
+            int from = Math.max(0, all.length - 6000);
+            text = "voice log (" + LauncherActivity.class.getPackage().getName() + ")\n" + new String(all, from, all.length - from, "UTF-8");
+        } catch (Exception e) {
+            text = "no voice log: " + e;
+        }
+        android.content.ClipboardManager cm = (android.content.ClipboardManager) getSystemService(CLIPBOARD_SERVICE);
+        cm.setPrimaryClip(android.content.ClipData.newPlainText("voice log", text));
+        android.widget.Toast.makeText(this, "Voice log copied", android.widget.Toast.LENGTH_SHORT).show();
     }
 }

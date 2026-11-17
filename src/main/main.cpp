@@ -389,6 +389,7 @@ namespace {
                 std::printf("[app] back in the foreground: game resumed\n");
                 if (audio_device != 0) SDL_PauseAudioDevice(audio_device, 0);
                 ultramodern::set_paused(false);
+                hyp::vru::mic_reopen(); // Android hands background apps a silent microphone; start fresh
                 break;
         }
         return 1;

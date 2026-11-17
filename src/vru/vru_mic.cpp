@@ -56,6 +56,7 @@ namespace {
     float peak_rms = 0.0f;         // loudest 20 ms block of the current utterance
     clock_type::time_point last_voice;
     bool finish_requested = false;
+    bool reopen_requested = false; // reopen the capture device (recognizer thread, without the lock)
     std::vector<float> injected;   // test audio for the next utterance
 
     FILE* voice_log_file = nullptr;
@@ -138,6 +139,34 @@ namespace {
         hyp::vru::voice_log("[mic] capturing from '%s'\n", device_name.empty() ? "(default)" : device_name.c_str());
     }
 
+    // Close and reopen the capture device; call WITHOUT holding the lock.
+    void reopen_device(const std::string& name) {
+        SDL_AudioDeviceID old = device;
+        if (old != 0) SDL_CloseAudioDevice(old);
+        SDL_AudioSpec want{};
+        want.freq = rate;
+        want.format = AUDIO_F32;
+        want.channels = 1;
+        want.samples = 512;
+        want.callback = capture_callback;
+        SDL_AudioDeviceID d = SDL_OpenAudioDevice(name.empty() ? nullptr : name.c_str(), 1, &want, nullptr, 0);
+        {
+            std::lock_guard lock{ mutex };
+            device = d;
+            preroll.clear();
+            partial_block.clear();
+            noise_floor = 0.003f;
+            if (d == 0) status = hyp::vru::MicStatus::NoMicrophone;
+            else if (status == hyp::vru::MicStatus::NoMicrophone) status = hyp::vru::MicStatus::Ready;
+        }
+        if (d == 0) {
+            hyp::vru::voice_log("[mic] could not reopen the microphone: %s\n", SDL_GetError());
+            return;
+        }
+        SDL_PauseAudioDevice(d, 0);
+        hyp::vru::voice_log("[mic] microphone reopened\n");
+    }
+
     // On a miss, list what the game was listening for (once per dictionary).
     void log_dictionary(const std::vector<hyp::vru::DictionaryWord>& words) {
         static std::string last;
@@ -183,9 +212,31 @@ namespace {
         bool held_long = utterance.size() >= preroll_samples + rate * 4 / 10;
         if (!heard_speech && held_long && peak_rms > std::max(0.002f, noise_floor * 1.5f)) heard_speech = true;
         if (!heard_speech) {
-            // Nothing said: let the game stop listening on its own.
-            hyp::vru::voice_log("[mic] no speech heard (loudest %.4f, background %.4f)\n", peak_rms, noise_floor);
-            set_heard("(nothing - is the right microphone selected?)");
+            // Nothing said: let the game stop listening on its own. Say why, as far as we can tell.
+            float loudest_sample = 0.0f;
+            for (float v : utterance) loudest_sample = std::max(loudest_sample, std::fabs(v));
+            double held = std::chrono::duration<double>(clock_type::now() - talk_pressed_since).count();
+            hyp::vru::voice_log("[mic] no speech heard (loudest %.4f, background %.4f, peak sample %.5f, held %.2f s)\n",
+                                peak_rms, noise_floor, loudest_sample, held);
+            if (loudest_sample < 0.0001f) {
+                // Pure digital silence: the system is blocking the microphone (access switched off,
+                // another app recording, or the recording went stale). Reopen it for the next try.
+#ifdef __ANDROID__
+                set_heard("(the microphone sent no sound - is microphone access on? Try again)");
+#else
+                set_heard("(the microphone sent no sound - is the right microphone selected?)");
+#endif
+                reopen_requested = true;
+                wake.notify_all();
+            } else if (!held_long) {
+                set_heard("(let go too soon - hold TALK the whole time you speak)");
+            } else {
+#ifdef __ANDROID__
+                set_heard("(too quiet - speak up, close to the bottom of the phone)");
+#else
+                set_heard("(nothing - is the right microphone selected?)");
+#endif
+            }
             state = State::Idle;
             utterance.clear();
             return;
@@ -200,7 +251,14 @@ namespace {
             bool had_voice = false;
             {
                 std::unique_lock lock{ mutex };
-                wake.wait(lock, [] { return finish_requested || state == State::Recognizing; });
+                wake.wait(lock, [] { return finish_requested || reopen_requested || state == State::Recognizing; });
+                if (reopen_requested) {
+                    reopen_requested = false;
+                    std::string name = device_name;
+                    lock.unlock();               // closing joins the capture thread, which takes the lock
+                    reopen_device(name);
+                    continue;
+                }
                 if (finish_requested) finish_recording();
                 if (state != State::Recognizing) continue;
                 audio.swap(utterance);
@@ -283,7 +341,7 @@ void hyp::vru::mic_init(const std::filesystem::path& model_path, const std::stri
         hyp::vru::voice_log("[mic] speech model loaded in %.2f s\n", std::chrono::duration<double>(clock_type::now() - start).count());
         std::lock_guard lock{ mutex };
         open_device();
-        if (device != 0) status = MicStatus::Ready;
+        status = device != 0 ? MicStatus::Ready : MicStatus::NoMicrophone; // was left at Loading on failure
         std::thread(recognizer_thread).detach();
     }).detach();
 }
@@ -295,6 +353,13 @@ void hyp::vru::mic_set_device(const std::string& microphone) {
         open_device();
         status = device != 0 ? MicStatus::Ready : MicStatus::NoMicrophone;
     }
+}
+
+void hyp::vru::mic_reopen() {
+    std::lock_guard lock{ mutex };
+    if (status != MicStatus::Ready && status != MicStatus::NoMicrophone) return; // not started yet
+    reopen_requested = true;
+    wake.notify_all();
 }
 
 hyp::vru::MicStatus hyp::vru::mic_status() {

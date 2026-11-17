@@ -106,6 +106,8 @@ namespace {
             int tasks = 0; std::string path;
             in >> tasks; std::getline(in >> std::ws, path);
             hyp::renderer::request_matrix_capture(path, tasks);
+        } else if (cmd == "micreopen") {
+            hyp::vru::mic_reopen();
         } else if (cmd == "save") {
             save_requested = true;
         } else if (cmd == "shot") {

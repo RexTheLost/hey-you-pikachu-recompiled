@@ -2,8 +2,8 @@
 <!-- Hey You, Pikachu! Recompiled for Android. Packaged by tools/package_android.sh (no Gradle). -->
 <manifest xmlns:android="http://schemas.android.com/apk/res/android"
     package="com.hyprecomp.pikachu"
-    android:versionCode="9"
-    android:versionName="0.9-android"
+    android:versionCode="10"
+    android:versionName="0.10-android"
     android:installLocation="auto">
 
     <uses-feature android:name="android.hardware.vulkan.version" android:version="0x401000" android:required="true" />
