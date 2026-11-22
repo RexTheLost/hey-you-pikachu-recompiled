@@ -58,7 +58,7 @@ namespace {
         { 1920, 1440, L"1920 × 1440 (6×)" },
     };
     const int msaa_levels[] = { 0, 2, 4, 8 };
-    const int volume_levels[] = { 100, 75, 50, 25 };
+    const int volume_levels[] = { 100, 75, 50, 25, 10, 5 };   // IDs 400-405 (mute is 410)
 
     HWND hwnd = nullptr;
     HMENU menu_bar = nullptr;
