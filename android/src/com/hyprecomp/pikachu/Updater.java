@@ -50,6 +50,11 @@ final class Updater {
         this.proceed = proceed;
     }
 
+    /** The Quest (VR) build has its own update channel, so it never gets the phone APK. */
+    private String channel() {
+        return HypNative.isVrPackage(activity) ? "/vr" : "";
+    }
+
     private long installedCode() {
         try {
             return activity.getPackageManager().getPackageInfo(activity.getPackageName(), 0).getLongVersionCode();
@@ -63,7 +68,7 @@ final class Updater {
         new Thread(() -> {
             org.json.JSONObject info = null;
             try {
-                HttpURLConnection c = (HttpURLConnection) new URL(SERVER + "/latest").openConnection();
+                HttpURLConnection c = (HttpURLConnection) new URL(SERVER + channel() + "/latest").openConnection();
                 c.setConnectTimeout(4000);
                 c.setReadTimeout(4000);
                 if (c.getResponseCode() == 200) {
@@ -163,7 +168,7 @@ final class Updater {
         new Thread(() -> {
             String error = null;
             try {
-                HttpURLConnection c = (HttpURLConnection) new URL(SERVER + "/apk/" + code).openConnection();
+                HttpURLConnection c = (HttpURLConnection) new URL(SERVER + channel() + "/apk/" + code).openConnection();
                 c.setConnectTimeout(10000);
                 c.setReadTimeout(20000);
                 if (c.getResponseCode() != 200) throw new Exception("server said " + c.getResponseCode());

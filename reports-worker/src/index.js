@@ -53,6 +53,45 @@ export default {
 				"Content-Disposition": `attachment; filename="HeyYouPikachu-${apk[1]}.apk"`,
 			} });
 		}
+		// VR (Quest) update channel: tools/vr_release.py publish puts "vr-latest" and "vr-apk:<code>" in BUILDS.
+		if (url.pathname === "/vr/latest" && request.method === "GET") {
+			const latest = await env.BUILDS.get("vr-latest");
+			if (!latest) {
+				return new Response("No VR build published yet", { status: 404 });
+			}
+			return new Response(latest, { headers: { "Content-Type": "application/json", "Cache-Control": "no-store" } });
+		}
+		const vrApk = url.pathname.match(/^\/vr\/apk\/(\d+)$/);
+		if (vrApk && request.method === "GET") {
+			const body = await env.BUILDS.get("vr-apk:" + vrApk[1], { type: "stream" });
+			if (!body) {
+				return new Response("Not found", { status: 404 });
+			}
+			return new Response(body, { headers: {
+				"Content-Type": "application/vnd.android.package-archive",
+				"Content-Disposition": `attachment; filename="HeyYouPikachuVR-${vrApk[1]}.apk"`,
+			} });
+		}
+		// One-time link for a personal build (tools/vr_release.py first-link / new-link): the token's hash is a
+		// BUILDS key naming the blob; the first download deletes the token, so the link works once.
+		const first = url.pathname.match(/^\/vr\/first\/([A-Za-z0-9_-]{20,80})$/);
+		if (first && request.method === "GET") {
+			const tokenKey = "vr-first-token:" + await hash(first[1]);
+			const blobKey = await env.BUILDS.get(tokenKey);
+			if (!blobKey) {
+				return new Response("This link was already used or has expired. Ask for a new one.\n", { status: 410 });
+			}
+			await env.BUILDS.delete(tokenKey);
+			const body = await env.BUILDS.get(blobKey, { type: "stream" });
+			if (!body) {
+				return new Response("This build is gone. Ask for a new link.\n", { status: 410 });
+			}
+			return new Response(body, { headers: {
+				"Content-Type": "application/vnd.android.package-archive",
+				"Content-Disposition": `attachment; filename="HeyYouPikachuVR.apk"`,
+				"Cache-Control": "no-store",
+			} });
+		}
 		if ((url.pathname === "/live" || url.pathname === "/clip") && request.method === "POST") {
 			if (request.headers.get("X-HYP-App") !== "hyp-android") {
 				return new Response("Not found", { status: 404 });

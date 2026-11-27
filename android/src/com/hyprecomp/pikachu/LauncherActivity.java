@@ -94,12 +94,8 @@ public class LauncherActivity extends Activity {
         }
         if (file(CRASH).exists()) showCrash();
         else if (!showUnexpectedExit()) {
-            if (HypNative.isVrPackage(this)) {
-                next();          // the Quest build is sideloaded: the updater only knows the phone APK
-            } else {
-                text.setText("Checking for updates...");
-                updater.check(this::next);
-            }
+            text.setText("Checking for updates...");
+            updater.check(this::next);       // the VR package uses its own channel (Updater.channel)
         }
     }
 
@@ -306,6 +302,19 @@ public class LauncherActivity extends Activity {
 
     /** Do whichever step is missing, then start the game. */
     private void next() {
+        if (!file(STORED_ROM).exists() && !file("baserom.us.z64").exists() && hasAsset("baserom.us.z64")) {
+            // A personal build with the player's own ROM packed in: copy it out once (updates keep the copy).
+            text.setText("Unpacking the game...");
+            pick.setVisibility(View.GONE);
+            new Thread(() -> {
+                String err = copyAsset("baserom.us.z64", file("baserom.us.z64"));
+                runOnUiThread(() -> {
+                    if (err != null) text.setText("Couldn't unpack the game: " + err);
+                    next();
+                });
+            }).start();
+            return;
+        }
         if (!file(STORED_ROM).exists() && !file("baserom.us.z64").exists()) {
             text.setText("This app runs your own copy of Hey You, Pikachu! (USA, N64).\n"
                 + "Choose the .z64 / .n64 / .v64 file (or a .zip with it inside). It is copied into the app once.");
@@ -386,6 +395,25 @@ public class LauncherActivity extends Activity {
                 total += n;
                 if (total > 128L << 20) throw new Exception("too big for an N64 ROM");
             }
+            return null;
+        } catch (Exception e) {
+            out.delete();
+            return e.getMessage();
+        }
+    }
+
+    private boolean hasAsset(String name) {
+        try (InputStream in = getAssets().open(name)) {
+            return true;
+        } catch (Exception e) {
+            return false;
+        }
+    }
+
+    private String copyAsset(String name, File out) {
+        try (InputStream in = new BufferedInputStream(getAssets().open(name)); OutputStream os = new FileOutputStream(out)) {
+            byte[] buf = new byte[1 << 16];
+            for (int n; (n = in.read(buf)) > 0; ) os.write(buf, 0, n);
             return null;
         } catch (Exception e) {
             out.delete();

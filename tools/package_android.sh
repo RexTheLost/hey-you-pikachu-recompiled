@@ -4,6 +4,8 @@
 #   tools/package_android.sh        -> build/android/HeyYouPikachu.apk
 #   HYP_VR=1 tools/package_android.sh -> build/android-vr/HeyYouPikachuVR.apk (Meta Quest, sideload;
 #                                       package com.hyprecomp.pikachu.vr, android/AndroidManifest-vr.xml)
+#   HYP_VR=1 HYP_VR_ROM=<rom.z64> ...  -> build/android-vr/HeyYouPikachuVR-personal.apk with that ROM packed in
+#                                       (assets/baserom.us.z64). NEVER publish it: one-time link only (tools/vr_release.py).
 # The voice model is downloaded by the app on first start (HYP_APK_MODEL=1 packs it in as an
 # uncompressed asset instead). The ROM is never packed: the player picks their own copy.
 set -e
@@ -29,6 +31,7 @@ if [ "$HYP_VR" = "1" ]; then
     APK=build/android-vr/HeyYouPikachuVR.apk
     RENAME="--rename-manifest-package com.hyprecomp.pikachu.vr"
     EXTRA_SO=${OPENXR_LOADER:-D:/AI/tools/openxr-android/arm64-v8a/libopenxr_loader.so}
+    if [ -n "$HYP_VR_ROM" ]; then APK=build/android-vr/HeyYouPikachuVR-personal.apk; fi
 fi
 
 rm -rf "$OUT"
@@ -38,6 +41,8 @@ mkdir -p "$OUT/res" "$OUT/gen" "$OUT/classes" "$OUT/assets" "$OUT/lib/arm64-v8a"
 "$BT/aapt2.exe" compile --dir android/res -o "$OUT/res/res.zip"
 # HYP_APK_MODEL=1 packs the voice model in (a 150 MB APK); by default the app downloads it once.
 if [ "$HYP_APK_MODEL" = "1" ]; then cp "$MODEL" "$OUT/assets/ggml-base.en.bin"; fi
+# HYP_VR_ROM: a personal build with the player's own ROM (LauncherActivity copies it out on first start).
+if [ -n "$HYP_VR_ROM" ]; then cp "$HYP_VR_ROM" "$OUT/assets/baserom.us.z64"; fi
 "$BT/aapt2.exe" link -o "$OUT/base.apk" -I "$JAR" --manifest "$MANIFEST" $RENAME \
     --java "$OUT/gen" -A "$OUT/assets" -0 bin --min-sdk-version 26 --target-sdk-version 35 \
     "$OUT/res/res.zip"
