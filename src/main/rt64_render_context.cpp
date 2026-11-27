@@ -9,6 +9,7 @@
 #include <string>
 #include <cstdlib>
 #include <algorithm>
+#include <cmath>
 
 #include "hle/rt64_application.h"
 
@@ -17,6 +18,7 @@
 
 #include "hyp_render.h"
 #include "hyp_trace.h"
+#include "vr/hyp_vr.h"
 
 static uint8_t* debug_rdram = nullptr; // for save_vi_framebuffer
 
@@ -125,6 +127,20 @@ RT64::UserConfiguration::InternalColorFormat to_rt64(ultramodern::renderer::High
     }
 }
 
+// VR: one fixed setup. Render about as wide as an eye image, no MSAA (the stereo path needs the plain targets),
+// the N64's own 4:3 picture, and frame interpolation up to the headset's refresh rate.
+static void apply_vr_config(RT64::Application* application) {
+    if (!hyp::vr::enabled()) return;
+    application->userConfig.resolution = RT64::UserConfiguration::Resolution::Manual;
+    application->userConfig.resolutionMultiplier = std::max(2.0, std::ceil(hyp::vr::eye_width() / 320.0));
+    application->userConfig.downsampleMultiplier = 1;
+    application->userConfig.antialiasing = RT64::UserConfiguration::Antialiasing::None;
+    application->userConfig.aspectRatio = RT64::UserConfiguration::AspectRatio::Original;
+    application->userConfig.extAspectRatio = RT64::UserConfiguration::AspectRatio::Original;
+    application->userConfig.refreshRate = RT64::UserConfiguration::RefreshRate::Manual;
+    application->userConfig.refreshRateTarget = hyp::vr::refresh_rate();
+}
+
 void set_application_user_config(RT64::Application* application, const ultramodern::renderer::GraphicsConfig& config) {
     switch (config.res_option) {
         default:
@@ -164,6 +180,7 @@ void set_application_user_config(RT64::Application* application, const ultramode
     application->userConfig.refreshRateTarget = config.rr_manual_value;
     application->userConfig.internalColorFormat = to_rt64(config.hpfb_option);
     application->userConfig.displayBuffering = RT64::UserConfiguration::DisplayBuffering::Triple;
+    apply_vr_config(application);
 }
 
 ultramodern::renderer::SetupResult map_setup_result(RT64::Application::SetupResult rt64_result) {
@@ -260,6 +277,18 @@ hyp::renderer::RT64Context::RT64Context(uint8_t* rdram, ultramodern::renderer::W
         if (std::string(api_env) == "vulkan") api_option = ultramodern::renderer::GraphicsApi::Vulkan;
         else if (std::string(api_env) == "d3d12") api_option = ultramodern::renderer::GraphicsApi::D3D12;
     }
+    // VR: OpenXR must approve RT64's Vulkan device, so set it up before RT64 creates one.
+    if (hyp::vr::requested()) {
+        if (hyp::vr::init()) {
+            api_option = ultramodern::renderer::GraphicsApi::Vulkan;
+            apply_vr_config(app.get());
+            std::printf("[start] VR on: OpenXR runtime found\n");
+        }
+        else {
+            std::printf("[start] VR requested but no OpenXR runtime/headset: flat mode\n");
+        }
+    }
+
     switch (api_option) {
         case ultramodern::renderer::GraphicsApi::D3D12:
             app->userConfig.graphicsAPI = RT64::UserConfiguration::GraphicsAPI::D3D12;
@@ -506,6 +535,7 @@ void hyp::renderer::RT64Context::shutdown() {
     if (app != nullptr) {
         app->end();
     }
+    hyp::vr::shutdown();
 }
 
 bool hyp::renderer::RT64Context::update_config(const ultramodern::renderer::GraphicsConfig& old_config, const ultramodern::renderer::GraphicsConfig& new_config) {

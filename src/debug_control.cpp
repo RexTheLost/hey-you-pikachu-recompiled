@@ -18,6 +18,7 @@
 #include "hyp_render.h"
 #include "hyp_motion.h"
 #include "hyp_vru.h"
+#include "vr/hyp_vr.h"
 
 namespace {
     using clock_type = std::chrono::steady_clock;
@@ -110,6 +111,11 @@ namespace {
             std::string path; std::getline(in >> std::ws, path);
             bool ok = hyp::renderer::save_vi_framebuffer(path);
             std::printf("[control] fbshot %s\n", ok ? "saved" : "failed");
+        } else if (cmd == "vrdump") {
+            std::string path; std::getline(in >> std::ws, path);
+            hyp::vr::request_dump(path);      // VR debug: saves both eye images of the next frame (<path>_L.ppm/_R.ppm)
+        } else if (cmd == "vrswap") {
+            hyp::vr::toggle_swap_eyes();      // VR debug: the right eye goes into the framebuffer fbshot reads
         } else if (cmd == "micreopen") {
             hyp::vru::mic_reopen();
         } else if (cmd == "save") {

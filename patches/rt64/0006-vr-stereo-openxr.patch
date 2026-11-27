@@ -1,0 +1,699 @@
+diff --git a/src/hle/rt64_application.cpp b/src/hle/rt64_application.cpp
+index f7e1c26..df318cd 100644
+--- a/src/hle/rt64_application.cpp
++++ b/src/hle/rt64_application.cpp
+@@ -4,6 +4,7 @@
+ 
+ #include "rt64_application.h"
+ #include "rhi/rt64_render_hooks.h"
++#include "rt64_vr.h"
+ 
+ #include <filesystem>
+ 
+@@ -603,6 +604,10 @@ namespace RT64 {
+         workloadQueue.reset();
+         presentQueue.reset();
+ 
++        if (VRInterface *vr = GetVRInterface()) {
++            vr->releaseDeviceResources();
++        }
++
+         // Call the deinit hook if one was attached.
+         RenderHookDeinit *deinitHook = GetRenderHookDeinit();
+         if (deinitHook != nullptr) {
+diff --git a/src/hle/rt64_present_queue.cpp b/src/hle/rt64_present_queue.cpp
+index 15f0bd7..a50793a 100644
+--- a/src/hle/rt64_present_queue.cpp
++++ b/src/hle/rt64_present_queue.cpp
+@@ -295,6 +295,33 @@ namespace RT64 {
+                 frameCountersNextPresented = frameCounters.count;
+             }
+ 
++            // VR: both eyes go to the headset instead of the window. OpenXR paces the frames.
++            if (VRActive()) {
++                if (i < framesToPresent) {
++                    threadPresentVR(present, colorTarget, uint32_t(i), filtering);
++                }
++
++                if (lockedWorkloadMutex) {
++                    ext.sharedResources->workloadMutex.unlock();
++                    lockedWorkloadMutex = false;
++                }
++
++                if (frameCountersNextPresented > 0) {
++                    {
++                        std::unique_lock<std::mutex> interpolatedLock(ext.sharedResources->interpolatedMutex);
++                        frameCounters.presented = frameCountersNextPresented;
++                    }
++
++                    ext.sharedResources->interpolatedCondition.notify_all();
++                }
++
++                if (i == 0) {
++                    notifyPresentId(present);
++                }
++
++                continue;
++            }
++
+             uint32_t swapChainIndex = 0;
+             const bool presentFrame = (i < framesToPresent) && swapChainValid;
+             if (presentFrame) {
+@@ -403,6 +430,126 @@ namespace RT64 {
+         }
+     }
+ 
++    void PresentQueue::threadPresentVR(const Present &present, RenderTarget *leftTarget, uint32_t frameIndex, UserConfiguration::Filtering filtering) {
++        VRInterface *vr = GetVRInterface();
++        RenderTarget *rightTarget = leftTarget;
++        uint64_t token = 0;
++        {
++            auto &rightTargets = ext.sharedResources->vrRightTargets;
++            if ((frameIndex < rightTargets.size()) && (rightTargets[frameIndex] != nullptr) && !rightTargets[frameIndex]->isEmpty()) {
++                rightTarget = rightTargets[frameIndex].get();
++            }
++
++            auto &frameViews = ext.sharedResources->vrFrameViews;
++            if (frameIndex < frameViews.size()) {
++                token = frameViews[frameIndex].token;
++            }
++        }
++
++        VRTarget outputs[2];
++        if (!vr->beginPresent(ext.device, token, outputs)) {
++            vr->endPresent(false);
++            return;
++        }
++
++        RenderCommandList *commandList = ext.presentGraphicsWorker->commandList.get();
++        commandList->begin();
++        RenderTarget *eyeTargets[2] = { leftTarget, rightTarget };
++        for (uint32_t eye = 0; eye < 2; eye++) {
++            const VRTarget &output = outputs[eye];
++            RenderTarget *target = eyeTargets[eye];
++            commandList->barriers(RenderBarrierStage::GRAPHICS, RenderTextureBarrier(output.texture, RenderTextureLayout::COLOR_WRITE));
++
++            VIRenderer::RenderParams renderParams;
++            if ((target != nullptr) && !target->isEmpty()) {
++                renderParams.device = ext.device;
++                renderParams.commandList = commandList;
++                renderParams.swapChain = ext.swapChain;
++                renderParams.shaderLibrary = ext.shaderLibrary;
++                renderParams.textureFormat = target->format;
++                renderParams.resolutionScale = target->resolutionScale;
++                renderParams.downsamplingScale = 1;
++                renderParams.filtering = filtering;
++                renderParams.vi = &present.screenVI;
++                renderParams.outputWidth = output.width;
++                renderParams.outputHeight = output.height;
++                if (target->downsampleMultiplier > 1) {
++                    target->downsampleTarget(ext.presentGraphicsWorker, ext.shaderLibrary);
++                    renderParams.texture = target->downsampledTexture.get();
++                    renderParams.textureWidth = target->width / target->downsampleMultiplier;
++                    renderParams.textureHeight = target->height / target->downsampleMultiplier;
++                    renderParams.downsamplingScale = target->downsampleMultiplier;
++                }
++                else {
++                    target->resolveTarget(ext.presentGraphicsWorker, ext.shaderLibrary);
++                    renderParams.texture = target->getResolvedTexture();
++                    renderParams.textureWidth = target->width;
++                    renderParams.textureHeight = target->height;
++                }
++            }
++
++            commandList->setFramebuffer(output.framebuffer);
++            commandList->clearColor();
++            if (renderParams.texture != nullptr) {
++                commandList->barriers(RenderBarrierStage::GRAPHICS, RenderTextureBarrier(renderParams.texture, RenderTextureLayout::SHADER_READ));
++                viRenderer->render(renderParams);
++            }
++
++            commandList->barriers(RenderBarrierStage::NONE, RenderTextureBarrier(output.texture, RenderTextureLayout::COLOR_WRITE));
++        }
++
++        // Debug dump: copy both eye images (exactly what the headset gets) to readback buffers.
++        std::string dumpPrefix;
++        const bool dump = vr->takeDumpRequest(dumpPrefix);
++        std::unique_ptr<RenderBuffer> dumpBuffers[2];
++        uint32_t dumpRowWidth[2] = {};
++        if (dump) {
++            for (uint32_t eye = 0; eye < 2; eye++) {
++                const VRTarget &output = outputs[eye];
++                dumpRowWidth[eye] = (output.width + 63) & ~63u;     // 256-byte aligned rows
++                dumpBuffers[eye] = ext.device->createBuffer(RenderBufferDesc::ReadbackBuffer(uint64_t(dumpRowWidth[eye]) * output.height * 4));
++                commandList->barriers(RenderBarrierStage::COPY, RenderTextureBarrier(output.texture, RenderTextureLayout::COPY_SOURCE));
++                commandList->copyTextureRegion(RenderTextureCopyLocation::PlacedFootprint(dumpBuffers[eye].get(), SwapChainFormat, output.width, output.height, 1, dumpRowWidth[eye]),
++                    RenderTextureCopyLocation::Subresource(output.texture));
++                commandList->barriers(RenderBarrierStage::GRAPHICS, RenderTextureBarrier(output.texture, RenderTextureLayout::COLOR_WRITE));
++            }
++        }
++
++        commandList->end();
++        const RenderCommandList *submitList = commandList;
++        ext.presentGraphicsWorker->commandQueue->executeCommandLists(&submitList, 1, nullptr, 0, nullptr, 0, ext.presentGraphicsWorker->commandFence.get());
++        ext.presentGraphicsWorker->wait();
++        vr->endPresent(true);
++
++        if (dump) {
++            for (uint32_t eye = 0; eye < 2; eye++) {
++                const VRTarget &output = outputs[eye];
++                const std::string path = dumpPrefix + ((eye == 0) ? "_L.ppm" : "_R.ppm");
++                FILE *f = fopen(path.c_str(), "wb");
++                if (f == nullptr) {
++                    continue;
++                }
++
++                const uint8_t *data = reinterpret_cast<const uint8_t *>(dumpBuffers[eye]->map());
++                fprintf(f, "P6\n%u %u\n255\n", output.width, output.height);
++                const bool bgra = (SwapChainFormat == RenderFormat::B8G8R8A8_UNORM);
++                std::vector<uint8_t> row(output.width * 3);
++                for (uint32_t y = 0; y < output.height; y++) {
++                    const uint8_t *src = data + uint64_t(y) * dumpRowWidth[eye] * 4;
++                    for (uint32_t x = 0; x < output.width; x++) {
++                        row[x * 3 + 0] = src[x * 4 + (bgra ? 2 : 0)];
++                        row[x * 3 + 1] = src[x * 4 + 1];
++                        row[x * 3 + 2] = src[x * 4 + (bgra ? 0 : 2)];
++                    }
++                    fwrite(row.data(), 1, row.size(), f);
++                }
++
++                dumpBuffers[eye]->unmap();
++                fclose(f);
++            }
++        }
++    }
++
+     void PresentQueue::skipInterpolation() {
+         {
+             std::unique_lock<std::mutex> interpolatedLock(ext.sharedResources->interpolatedMutex);
+diff --git a/src/hle/rt64_present_queue.h b/src/hle/rt64_present_queue.h
+index 7bec992..0419c20 100644
+--- a/src/hle/rt64_present_queue.h
++++ b/src/hle/rt64_present_queue.h
+@@ -68,6 +68,7 @@ namespace RT64 {
+         void waitForPresentId(uint64_t waitId);
+         void setup(const External &ext);
+         void threadPresent(const Present &present, bool &swapChainValid);
++        void threadPresentVR(const Present &present, RenderTarget *leftTarget, uint32_t frameIndex, UserConfiguration::Filtering filtering);
+         void skipInterpolation();
+         void notifyPresentId(const Present &present);
+         bool detectPresentWait();
+diff --git a/src/hle/rt64_shared_queue_resources.h b/src/hle/rt64_shared_queue_resources.h
+index 8858dac..9019b5f 100644
+--- a/src/hle/rt64_shared_queue_resources.h
++++ b/src/hle/rt64_shared_queue_resources.h
+@@ -12,6 +12,7 @@
+ #include "render/rt64_render_target_manager.h"
+ 
+ #include "rt64_framebuffer_manager.h"
++#include "rt64_vr.h"
+ 
+ #if RT_ENABLED
+ #   include "render/rt64_raytracing_resources.h"
+@@ -52,6 +53,8 @@ namespace RT64 {
+         std::vector<uint32_t> colorImageAddressVector;
+         std::unordered_set<uint32_t> colorImageAddressSet;
+         std::vector<std::unique_ptr<RenderTarget>> interpolatedColorTargets;
++        std::vector<std::unique_ptr<RenderTarget>> vrRightTargets;      // VR: right eye of display frame i (left eye uses the usual target)
++        std::vector<VRFrameViews> vrFrameViews;                         // VR: the views display frame i was rendered with
+         InterpolatedFrameCounters interpolatedFrames[2];
+         uint32_t interpolatedFramesIndex = 0;
+         std::mutex interpolatedMutex;
+diff --git a/src/hle/rt64_vr.h b/src/hle/rt64_vr.h
+new file mode 100644
+index 0000000..4fc65bb
+--- /dev/null
++++ b/src/hle/rt64_vr.h
+@@ -0,0 +1,74 @@
++//
++// RT64 VR (Hey You, Pikachu VR port)
++//
++// Stereo rendering: every display frame is drawn once per eye. The game's own camera stays the "body";
++// each eye adds the headset pose on top (view = gameView * eyeFromCamera) and uses the headset's own
++// field of view (projection rebuilt from the eye's tangents with the game's near/far planes).
++//
++// The game side implements VRInterface (OpenXR) and registers it with SetVRInterface() before RT64
++// starts rendering. With no interface registered nothing changes.
++//
++
++#pragma once
++
++#include <cstdint>
++#include <string>
++
++namespace RT64 {
++    struct RenderDevice;
++    struct RenderTexture;
++    struct RenderFramebuffer;
++
++    struct VREye {
++        // Row-vector 4x4 (v' = v * M), applied after the game's view matrix: camera space -> eye space.
++        // Translation is already in game units.
++        float eyeFromCamera[16];
++        // Tangents of the eye's field of view: left (negative), right, up, down (negative).
++        float tanLeft, tanRight, tanUp, tanDown;
++    };
++
++    struct VRFrameViews {
++        VREye eyes[2];
++        uint64_t token = 0;      // identifies the head pose these views came from (handed back on present)
++    };
++
++    struct VRTarget {
++        RenderTexture *texture = nullptr;
++        RenderFramebuffer *framebuffer = nullptr;
++        uint32_t width = 0;
++        uint32_t height = 0;
++    };
++
++    struct VRInterface {
++        virtual ~VRInterface() = default;
++
++        // True while the headset shows our frames: render stereo.
++        virtual bool active() = 0;
++
++        // Workload thread, once per display frame: the newest per-eye views.
++        virtual void latestViews(VRFrameViews &out) = 0;
++
++        // Present thread: start an XR frame and acquire one image per eye for the frame rendered with 'token'.
++        // Returns false when this frame should not be drawn (session not visible yet, etc.).
++        virtual bool beginPresent(RenderDevice *device, uint64_t token, VRTarget out[2]) = 0;
++
++        // Present thread, after the GPU finished drawing into the targets: release them and submit the frame.
++        virtual void endPresent(bool drawn) = 0;
++
++        // Application::end(), after the render threads stopped and before the device is destroyed:
++        // free everything that uses the device (eye images, the XR session).
++        virtual void releaseDeviceResources() = 0;
++
++        // Debug: a path prefix when the next presented frame's eye images should be saved (<prefix>_L.ppm / _R.ppm).
++        virtual bool takeDumpRequest(std::string &prefix) { return false; }
++    };
++
++    inline VRInterface *&VRInterfaceSlot() {
++        static VRInterface *vr = nullptr;
++        return vr;
++    }
++
++    inline void SetVRInterface(VRInterface *vr) { VRInterfaceSlot() = vr; }
++    inline VRInterface *GetVRInterface() { return VRInterfaceSlot(); }
++    inline bool VRActive() { VRInterface *vr = VRInterfaceSlot(); return (vr != nullptr) && vr->active(); }
++};
+diff --git a/src/hle/rt64_workload_queue.cpp b/src/hle/rt64_workload_queue.cpp
+index 5b0b726..bc72f4d 100644
+--- a/src/hle/rt64_workload_queue.cpp
++++ b/src/hle/rt64_workload_queue.cpp
+@@ -268,6 +268,7 @@ namespace RT64 {
+             fbManager.destroyAllTileCopies();
+             ext.sharedResources->fbConfigChanged = false;
+             ext.sharedResources->interpolatedColorTargets.clear();
++            ext.sharedResources->vrRightTargets.clear();
+         }
+ 
+         if (ext.sharedResources->userConfigChanged) {
+@@ -289,7 +290,7 @@ namespace RT64 {
+     void WorkloadQueue::threadRenderFrame(GameFrame &curFrame, const GameFrame &prevFrame, const WorkloadConfiguration &workloadConfig,
+         const DebuggerRenderer &debuggerRenderer, const DebuggerCamera &debuggerCamera, float curFrameWeight, float prevFrameWeight,
+         float deltaTimeMs, RenderTargetKey overrideTargetKey, int32_t overrideTargetFbPairIndex, RenderTarget *overrideTarget,
+-        uint32_t overrideTargetModifier, bool uploadVelocity, bool uploadExtras, bool interpolateTiles)
++        uint32_t overrideTargetModifier, bool uploadVelocity, bool uploadExtras, bool interpolateTiles, const VREye *vrEye)
+     {
+ #   if ENABLE_HIGH_RESOLUTION_RENDERER
+         std::scoped_lock<std::mutex> managerLock(ext.sharedResources->workloadMutex);
+@@ -300,7 +301,7 @@ namespace RT64 {
+         rendererProfiler.start();
+ 
+         const bool aspectRatioAdjustment = (abs(workloadConfig.aspectRatioScale - 1.0f) > 1e-6f);
+-        const bool processProjections = aspectRatioAdjustment || prevFrame.matched|| curFrame.isDebuggerCameraEnabled(*this);
++        const bool processProjections = aspectRatioAdjustment || prevFrame.matched || curFrame.isDebuggerCameraEnabled(*this) || (vrEye != nullptr);
+         bool uploadProjections = false;
+         if (processProjections) {
+             ProjectionProcessor::ProcessParams projParams;
+@@ -311,6 +312,7 @@ namespace RT64 {
+             projParams.curFrameWeight = curFrameWeight;
+             projParams.prevFrameWeight = prevFrameWeight;
+             projParams.aspectRatioScale = workloadConfig.aspectRatioScale;
++            projParams.vrEye = vrEye;
+             projectionProcessor.process(projParams);
+             projectionProcessor.upload(projParams);
+             uploadProjections = true;
+@@ -1025,6 +1027,31 @@ namespace RT64 {
+                     }
+                 }
+                 
++                // VR: each display frame is rendered twice. The left eye uses the usual target, the right eye its own.
++                const bool vrStereo = VRActive() && !usingMSAA && !interpolationTargetKey.isEmpty();
++                {
++                    static uint32_t vrLogCounter = 0;
++                    if (VRActive() && ((vrLogCounter++ % 120) == 0)) {
++                        fprintf(stdout, "[vr] workload: stereo %d, msaa %d, target %d, display frames %u, interpolated %d\n",
++                            int(vrStereo), int(usingMSAA), int(!interpolationTargetKey.isEmpty()), displayFrames, int(generateInterpolatedFrames));
++                        fflush(stdout);
++                    }
++                }
++                auto &vrRightTargets = ext.sharedResources->vrRightTargets;
++                if (vrStereo) {
++                    if (vrRightTargets.size() < displayFrames) {
++                        uint32_t previousSize = uint32_t(vrRightTargets.size());
++                        vrRightTargets.resize(displayFrames);
++                        for (uint32_t i = previousSize; i < displayFrames; i++) {
++                            vrRightTargets[i] = std::make_unique<RenderTarget>(interpolationTargetKey.address, Framebuffer::Type::Color, RenderMultisampling(), usesHDR);
++                        }
++                    }
++
++                    if (ext.sharedResources->vrFrameViews.size() < displayFrames) {
++                        ext.sharedResources->vrFrameViews.resize(displayFrames);
++                    }
++                }
++
+                 const int64_t originalTimeMicro = (workload.viOriginalRate > 0) ? (1000000 / workload.viOriginalRate) : 0;
+                 const int64_t setupTimeMicro = workloadTimer.elapsedMicroseconds();
+                 const int64_t adjustedTimeWindowMicro = originalTimeMicro - setupTimeMicro;
+@@ -1087,8 +1114,21 @@ namespace RT64 {
+                     }
+ 
+                     int64_t renderTimeMicro = workloadTimer.elapsedMicroseconds();
++                    VRFrameViews vrViews;
++                    if (vrStereo) {
++                        GetVRInterface()->latestViews(vrViews);
++                        ext.sharedResources->vrFrameViews[frame] = vrViews;
++                    }
++
+                     threadRenderFrame(curFrame, prevFrame, workloadConfig, workload.debuggerRenderer, workload.debuggerCamera, curFrameWeight, prevFrameWeight, deltaTimeMs,
+-                        interpolationTargetKey, interpolationTargetFbPairIndex, overrideTarget, overrideModifier, velocityUploaderUsed, uploadExtras, tileInterpolationUsed);
++                        interpolationTargetKey, interpolationTargetFbPairIndex, overrideTarget, overrideModifier, velocityUploaderUsed, uploadExtras, tileInterpolationUsed,
++                        vrStereo ? &vrViews.eyes[0] : nullptr);
++
++                    if (vrStereo) {
++                        threadRenderFrame(curFrame, prevFrame, workloadConfig, workload.debuggerRenderer, workload.debuggerCamera, curFrameWeight, prevFrameWeight, deltaTimeMs,
++                            interpolationTargetKey, interpolationTargetFbPairIndex, vrRightTargets[frame].get(), 64 + frame, velocityUploaderUsed, false, tileInterpolationUsed,
++                            &vrViews.eyes[1]);
++                    }
+ 
+                     // Add total time the frame took to render.
+                     renderTimeTotalMicro += workloadTimer.elapsedMicroseconds() - renderTimeMicro;
+diff --git a/src/hle/rt64_workload_queue.h b/src/hle/rt64_workload_queue.h
+index e9d7a02..4f0a457 100644
+--- a/src/hle/rt64_workload_queue.h
++++ b/src/hle/rt64_workload_queue.h
+@@ -113,7 +113,7 @@ namespace RT64 {
+         void threadRenderFrame(GameFrame &curFrame, const GameFrame &prevFrame, const WorkloadConfiguration &workloadConfig,
+             const DebuggerRenderer &debuggerRenderer, const DebuggerCamera &debuggerCamera, float curFrameWeight, float prevFrameWeight,
+             float deltaTimeMs, RenderTargetKey overrideTargetKey, int32_t overrideTargetFbPairIndex, RenderTarget *overrideTarget,
+-            uint32_t overrideTargetModifier, bool uploadVelocity, bool uploadExtras, bool interpolateTiles);
++            uint32_t overrideTargetModifier, bool uploadVelocity, bool uploadExtras, bool interpolateTiles, const VREye *vrEye = nullptr);
+ 
+         void threadAdvanceBarrier();
+         void threadAdvanceWorkloadId(uint64_t newWorkloadId);
+diff --git a/src/render/rt64_projection_processor.cpp b/src/render/rt64_projection_processor.cpp
+index 10a01cd..e3c6354 100644
+--- a/src/render/rt64_projection_processor.cpp
++++ b/src/render/rt64_projection_processor.cpp
+@@ -8,6 +8,50 @@
+ #include "hle/rt64_workload_queue.h"
+ 
+ namespace RT64 {
++    // VR: the headset eye rides on the game's camera, and its own frustum replaces the game's projection.
++    // The game's projection only supplies near/far (and its w scale, which N64 games often use).
++    static void applyVREye(const VREye &eye, interop::float4x4 &viewMatrix, interop::float4x4 &projMatrix) {
++        interop::float4x4 eyeFromCamera;
++        for (int r = 0; r < 4; r++) {
++            for (int c = 0; c < 4; c++) {
++                eyeFromCamera[r][c] = eye.eyeFromCamera[r * 4 + c];
++            }
++        }
++
++        viewMatrix = hlslpp::mul(viewMatrix, eyeFromCamera);
++
++        float s = -projMatrix[2][3];
++        if (fabsf(s) < 1e-6f) {
++            s = 1.0f;
++        }
++
++        const float a = projMatrix[2][2] / s;
++        const float b = projMatrix[3][2] / s;
++        float n = (fabsf(a - 1.0f) > 1e-6f) ? (b / (a - 1.0f)) : 1.0f;
++        float f = (fabsf(a + 1.0f) > 1e-6f) ? (b / (a + 1.0f)) : 10000.0f;
++        if (!(n > 0.0f) || !(f > n)) {
++            n = 10.0f;
++            f = 10000.0f;
++        }
++
++        const float l = eye.tanLeft, r = eye.tanRight, u = eye.tanUp, d = eye.tanDown;
++        interop::float4x4 m;
++        for (int i = 0; i < 4; i++) {
++            for (int j = 0; j < 4; j++) {
++                m[i][j] = 0.0f;
++            }
++        }
++
++        m[0][0] = 2.0f / (r - l) * s;
++        m[1][1] = 2.0f / (u - d) * s;
++        m[2][0] = (r + l) / (r - l) * s;
++        m[2][1] = (u + d) / (u - d) * s;
++        m[2][2] = -(f + n) / (f - n) * s;
++        m[2][3] = -s;
++        m[3][2] = -2.0f * f * n / (f - n) * s;
++        projMatrix = m;
++    }
++
+     inline void adjustProjectionMatrix(interop::float4x4 &matrix, const float aspectRatioScale) {
+         matrix[0][0] *= aspectRatioScale;
+         matrix[1][0] *= aspectRatioScale;
+@@ -41,6 +85,17 @@ namespace RT64 {
+             drawData.prevViewProjTransforms = drawData.viewProjTransforms;
+         }
+ 
++        if (p.vrEye != nullptr) {
++            static uint32_t vrLogCounter = 0;
++            if ((vrLogCounter++ % 240) == 0) {
++                size_t perspProjections = 0;
++                for (const GameScene &scene : p.curFrame->perspectiveScenes) perspProjections += scene.projections.size();
++                fprintf(stdout, "[vr] projections: %zu perspective scenes (%zu projections), %zu orthographic scenes, %zu workloads\n",
++                    p.curFrame->perspectiveScenes.size(), perspProjections, p.curFrame->orthographicScenes.size(), p.curFrame->workloads.size());
++                fflush(stdout);
++            }
++        }
++
+         for (size_t s = 0; s < p.curFrame->perspectiveScenes.size(); s++) {
+             processScene(p, p.curFrame->perspectiveScenes[s], s, true);
+         }
+@@ -48,6 +103,31 @@ namespace RT64 {
+         for (size_t s = 0; s < p.curFrame->orthographicScenes.size(); s++) {
+             processScene(p, p.curFrame->orthographicScenes[s], s, false);
+         }
++
++        // VR: every perspective projection of the frame gets this eye's camera, on top of whatever the scene pass
++        // did (scenes only exist while frames are matched for interpolation). Each transform once.
++        if (p.vrEye != nullptr) {
++            for (uint32_t w : p.curFrame->workloads) {
++                Workload &workload = p.workloadQueue->workloads[w];
++                DrawData &drawData = workload.drawData;
++                std::vector<bool> done(drawData.modViewTransforms.size(), false);
++                for (const FramebufferPair &fbPair : workload.fbPairs) {
++                    for (const Projection &proj : fbPair.projections) {
++                        const uint32_t t = proj.transformsIndex;
++                        if ((proj.type != Projection::Type::Perspective) || (t == 0) || (t >= done.size()) || done[t]) {
++                            continue;
++                        }
++
++                        done[t] = true;
++                        applyVREye(*p.vrEye, drawData.modViewTransforms[t], drawData.modProjTransforms[t]);
++                        drawData.modViewProjTransforms[t] = hlslpp::mul(drawData.modViewTransforms[t], drawData.modProjTransforms[t]);
++                        drawData.prevViewTransforms[t] = drawData.modViewTransforms[t];
++                        drawData.prevProjTransforms[t] = drawData.modProjTransforms[t];
++                        drawData.prevViewProjTransforms[t] = drawData.modViewProjTransforms[t];
++                    }
++                }
++            }
++        }
+     }
+ 
+     void ProjectionProcessor::processScene(const ProcessParams &p, const GameScene &scene, size_t sceneIndex, bool useScissorDetection) {
+diff --git a/src/render/rt64_projection_processor.h b/src/render/rt64_projection_processor.h
+index 143194d..3f1594b 100644
+--- a/src/render/rt64_projection_processor.h
++++ b/src/render/rt64_projection_processor.h
+@@ -7,6 +7,7 @@
+ #include "hle/rt64_game_frame.h"
+ 
+ #include "rt64_buffer_uploader.h"
++#include "hle/rt64_vr.h"
+ 
+ namespace RT64 {
+     struct ProjectionProcessor {
+@@ -21,6 +22,7 @@ namespace RT64 {
+             float curFrameWeight = 1.0f;
+             float prevFrameWeight = 0.0f;
+             float aspectRatioScale = 1.0f;
++            const VREye *vrEye = nullptr;       // VR: this eye's pose and field of view replace the game's camera
+         };
+ 
+         ProjectionProcessor();
+diff --git a/src/render/rt64_vi_renderer.cpp b/src/render/rt64_vi_renderer.cpp
+index d597d75..06e4ace 100644
+--- a/src/render/rt64_vi_renderer.cpp
++++ b/src/render/rt64_vi_renderer.cpp
+@@ -70,7 +70,13 @@ namespace RT64 {
+         RenderViewport viewport;
+         RenderRect scissor;
+         hlslpp::float2 fbHdRegion;
+-        getViewportAndScissor(p.swapChain, *p.vi, p.resolutionScale, p.downsamplingScale, viewport, scissor, fbHdRegion);
++        if (p.outputWidth > 0) {
++            getViewportAndScissor(float(p.outputWidth), float(p.outputHeight), *p.vi, p.resolutionScale, p.downsamplingScale, viewport, scissor, fbHdRegion);
++        }
++        else {
++            getViewportAndScissor(p.swapChain, *p.vi, p.resolutionScale, p.downsamplingScale, viewport, scissor, fbHdRegion);
++        }
++
+         p.commandList->setViewports(viewport);
+         p.commandList->setScissors(scissor);
+ 
+@@ -88,6 +94,10 @@ namespace RT64 {
+     }
+ 
+     void VIRenderer::getViewportAndScissor(const RenderSwapChain *swapChain, const VI &vi, hlslpp::float2 resolutionScale, uint32_t downsamplingScale, RenderViewport &viewport, RenderRect &scissor, hlslpp::float2 &fbHdRegion) {
++        getViewportAndScissor(float(swapChain->getWidth()), float(swapChain->getHeight()), vi, resolutionScale, downsamplingScale, viewport, scissor, fbHdRegion);
++    }
++
++    void VIRenderer::getViewportAndScissor(float windowWidth, float windowHeight, const VI &vi, hlslpp::float2 resolutionScale, uint32_t downsamplingScale, RenderViewport &viewport, RenderRect &scissor, hlslpp::float2 &fbHdRegion) {
+         // We define three different coordinate spaces to work with to translate the VI parameters into the Window.
+         //
+         // VideoSD: This corresponds to the SD TV Scanline space, which is what the VI natively works on.
+@@ -103,7 +113,7 @@ namespace RT64 {
+         // specified by the VI.
+         const hlslpp::float2 sdSize = { float(VI::Width), float(VI::Height) };
+         const hlslpp::float2 hdSize = computeHDSize(sdSize, resolutionScale, downsamplingScale);
+-        const hlslpp::float2 windowSize = { float(swapChain->getWidth()), float(swapChain->getHeight()) };
++        const hlslpp::float2 windowSize = { windowWidth, windowHeight };
+         const hlslpp::uint2 fbSize = vi.fbSize();
+         const hlslpp::float2 fbSdRegion = { float(fbSize.x), float(fbSize.y) };
+         fbHdRegion = computeHDSize(fbSdRegion, resolutionScale, downsamplingScale);
+diff --git a/src/render/rt64_vi_renderer.h b/src/render/rt64_vi_renderer.h
+index 9e83151..9647e4e 100644
+--- a/src/render/rt64_vi_renderer.h
++++ b/src/render/rt64_vi_renderer.h
+@@ -28,11 +28,14 @@ namespace RT64 {
+             uint32_t textureHeight = 0;
+             UserConfiguration::Filtering filtering = UserConfiguration::Filtering::Linear;
+             const VI *vi = nullptr;
++            uint32_t outputWidth = 0;       // VR: size of the eye image drawn into (instead of the swap chain)
++            uint32_t outputHeight = 0;
+         };
+ 
+         VIRenderer();
+         ~VIRenderer();
+         void render(const RenderParams &p);
+         static void getViewportAndScissor(const RenderSwapChain *swapChain, const VI &vi, hlslpp::float2 resolutionScale, uint32_t downsamplingScale, RenderViewport &viewport, RenderRect &scissor, hlslpp::float2 &fbHdRegion);
++        static void getViewportAndScissor(float windowWidth, float windowHeight, const VI &vi, hlslpp::float2 resolutionScale, uint32_t downsamplingScale, RenderViewport &viewport, RenderRect &scissor, hlslpp::float2 &fbHdRegion);
+     };
+ };
+\ No newline at end of file
+diff --git a/src/vulkan/rt64_vulkan.cpp b/src/vulkan/rt64_vulkan.cpp
+index 1b1fb86..a0639b4 100644
+--- a/src/vulkan/rt64_vulkan.cpp
++++ b/src/vulkan/rt64_vulkan.cpp
+@@ -53,6 +53,11 @@ namespace RT64 {
+     // so they're not under the limit set by the device or the backend.
+     static const uint32_t MaxQueuesPerFamilyCount = 4;
+ 
++    VulkanExternalHooks &GetVulkanExternalHooks() {
++        static VulkanExternalHooks hooks;
++        return hooks;
++    }
++
+     // Required extensions.
+ 
+     static const std::unordered_set<std::string> RequiredInstanceExtensions = {
+@@ -3549,6 +3554,19 @@ namespace RT64 {
+             }
+         }
+ 
++        // OpenXR decides which GPU drives the headset.
++        if (GetVulkanExternalHooks().pickPhysicalDevice) {
++            VkPhysicalDevice forced = GetVulkanExternalHooks().pickPhysicalDevice(renderInterface->instance);
++            if (forced != VK_NULL_HANDLE) {
++                physicalDevice = forced;
++                VkPhysicalDeviceProperties deviceProperties;
++                vkGetPhysicalDeviceProperties(physicalDevice, &deviceProperties);
++                description.name = std::string(deviceProperties.deviceName);
++                description.driverVersion = deviceProperties.driverVersion;
++                description.vendor = RenderDeviceVendor(deviceProperties.vendorID);
++            }
++        }
++
+         if (physicalDevice == VK_NULL_HANDLE) {
+             fprintf(stderr, "Unable to find a device with the required features.\n");
+             return;
+@@ -3758,6 +3776,12 @@ namespace RT64 {
+             enabledExtensions.push_back(extension.c_str());
+         }
+ 
++        for (const std::string &extension : GetVulkanExternalHooks().deviceExtensions) {
++            bool present = false;
++            for (const char *e : enabledExtensions) present = present || (extension == e);
++            if (!present) enabledExtensions.push_back(extension.c_str());
++        }
++
+         VkDeviceCreateInfo createInfo = {};
+         createInfo.sType = VK_STRUCTURE_TYPE_DEVICE_CREATE_INFO;
+         createInfo.pNext = createDeviceChain;
+@@ -3779,6 +3803,16 @@ namespace RT64 {
+             }
+         }
+ 
++        if (GetVulkanExternalHooks().deviceCreated) {
++            const uint32_t graphicsFamily = queueFamilyIndices[toFamilyIndex(RenderCommandListType::DIRECT)];
++            VulkanQueue &graphicsQueue = queueFamilies[graphicsFamily].queues[0];
++            if (graphicsQueue.mutex == nullptr) {
++                graphicsQueue.mutex = std::make_unique<std::mutex>();     // shared with RT64's own submits to this queue
++            }
++
++            GetVulkanExternalHooks().deviceCreated(renderInterface->instance, physicalDevice, vk, graphicsFamily, graphicsQueue.vk, graphicsQueue.mutex.get());
++        }
++
+         VmaVulkanFunctions vmaFunctions = {};
+         vmaFunctions.vkGetInstanceProcAddr = vkGetInstanceProcAddr;
+         vmaFunctions.vkGetDeviceProcAddr = vkGetDeviceProcAddr;
+@@ -4195,6 +4229,10 @@ namespace RT64 {
+         vkEnumerateInstanceExtensionProperties(nullptr, &extensionCount, availableExtensions.data());
+ 
+         std::unordered_set<std::string> requiredExtensions = RequiredInstanceExtensions;
++        for (const std::string &extension : GetVulkanExternalHooks().instanceExtensions) {
++            requiredExtensions.insert(extension);
++        }
++
+         std::unordered_set<std::string> supportedOptionalExtensions;
+ #   if DLSS_ENABLED
+         const std::unordered_set<std::string> dlssExtensions = DLSS::getRequiredInstanceExtensionsVulkan();
+diff --git a/src/vulkan/rt64_vulkan.h b/src/vulkan/rt64_vulkan.h
+index a446c32..4066be2 100644
+--- a/src/vulkan/rt64_vulkan.h
++++ b/src/vulkan/rt64_vulkan.h
+@@ -28,6 +28,8 @@
+ 
+ #include "vk_mem_alloc.h"
+ 
++#include <functional>
++
+ namespace RT64 {
+     struct VulkanCommandQueue;
+     struct VulkanDevice;
+@@ -35,6 +37,17 @@ namespace RT64 {
+     struct VulkanPool;
+     struct VulkanQueue;
+ 
++    // External integration (OpenXR): extra extensions, a forced physical device, and the created handles.
++    // Fill before creating the render interface. Empty hooks change nothing.
++    struct VulkanExternalHooks {
++        std::vector<std::string> instanceExtensions;
++        std::vector<std::string> deviceExtensions;
++        std::function<VkPhysicalDevice(VkInstance)> pickPhysicalDevice;
++        // instance, physical device, device, graphics queue family, queue 0 of that family and its submit mutex
++        std::function<void(VkInstance, VkPhysicalDevice, VkDevice, uint32_t, VkQueue, std::mutex *)> deviceCreated;
++    };
++    VulkanExternalHooks &GetVulkanExternalHooks();
++
+     struct VulkanBuffer : RenderBuffer {
+         VkBuffer vk = VK_NULL_HANDLE;
+         VulkanDevice *device = nullptr;

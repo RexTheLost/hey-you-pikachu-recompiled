@@ -1,0 +1,144 @@
+HEY YOU, PIKACHU - QUEST VR PORT (TRUE 3D)
+==========================================
+Decided 2026-11-26: Quest standalone, true 3D (you stand inside the game world).
+
+HOW IT WORKS
+- The game hands RT64 (the renderer) every 3D scene with its own camera.
+  RT64 already has a debug "free camera" hook that swaps out that camera for
+  each 3D scene (render/rt64_projection_processor.cpp). The VR camera uses
+  the same spot:
+    eye view = game camera, then the headset's head pose, then the eye offset
+    eye projection = the headset's own field of view for that eye
+- Each frame is drawn twice, once per eye, into OpenXR images instead of the
+  phone screen.
+- RT64 already draws in-between frames at the display rate. Head tracking
+  can run at 72/90 Hz while the game itself runs at about 20-30.
+- 2D parts (text boxes, Oak's portrait, menus, the word list) are flat
+  (orthographic) layers. They go on a floating panel in front of you instead
+  of being glued to your eyes.
+- Quest controllers become the N64 pad, read through OpenXR:
+    stick = stick, A/B = A/B, trigger = Z (talk), menu = Start
+  The headset mic replaces the phone mic; the voice code stays the same.
+
+KNOWN RISKS (true 3D)
+1. Culling. The game only draws what its own camera can see, using its
+   narrow N64 field of view. Quest shows about 100 degrees per eye, so
+   things at the edge of your view may be missing. Fix: find the game's
+   cull check (Ghidra) and widen it.
+2. Camera motion. The game moves its camera on its own (cutscenes, pans).
+   With your head inside that camera, sudden moves can cause motion
+   sickness. Plan: smooth or limit the game's yaw, and add an option to
+   lock the horizon.
+3. Scale. N64 units need converting to metres so Pikachu is about
+   40 cm tall. The model rip gives his real size.
+4. Backgrounds. Skies and other backdrops drawn as flat 2D rectangles stay
+   flat. That's fine in the distance, odd up close.
+5. Vulkan device. OpenXR has to approve the Vulkan device RT64 creates.
+   That needs a patch to RT64's Vulkan layer (plume) so it takes OpenXR's
+   device and extensions.
+
+MILESTONES
+M1 PC test bed: an OpenXR build on Windows (Vulkan), run with the Meta XR
+   Simulator (D:\AI\tools\meta-xr-simulator). Stereo 3D with head look,
+   tested on the PC before any headset time.
+M2 Quest APK: the same code through the Android build. Uses the Khronos
+   OpenXR loader (already on D: from Angel's Table), a VR manifest
+   (com.oculus.intent.category.VR) and controller input.
+M3 2D panel: text boxes, menus and the word list on a floating panel.
+M4 Culling + comfort: widen the game's cull, smooth the camera, set scale.
+M5 Talking: hold the trigger and use the headset mic, with live log
+   checks like on the phone.
+
+STATUS (PAUSED 2026-11-26, middle of M1)
+===================================
+WORKING (tested with the Meta XR Simulator, hidden desktop, 5% volume):
+- The VR build (tools\build_vr.bat -> build\win-vr, CMake HYP_ENABLE_VR=ON) starts OpenXR, gets past
+  RT64's Vulkan device creation, and creates the session. The session reaches FOCUSED (state 5).
+  Eye swapchains are 1680x1260 sRGB (mutable, drawn through a UNORM view).
+- Frames reach the headset: no xrEndFrame errors, and the game runs through the intro to Oak's forest.
+- RT64 runs its stereo branch (log: "[vr] workload: stereo 1") and gets correct, different per-eye
+  views from the XR module (log "[vr] views token N": eye0 tx +3, eye1 tx -3, asymmetric fovs).
+- With the run quitting through the game: "[vr] session closed", and sometimes exit code 0.
+
+OPEN PROBLEM (where we stopped):
+- PROVE THE EYES DIFFER. fbshot (the N64 RAM framebuffer) shows the same picture for both eyes, even
+  with an exaggerated scale (HYP_VR_SCALE=2000). Most likely fbshot is not what the headset sees:
+  RT64 writes RAM copies at native resolution from the original matrices. Not proven yet.
+- Fix already written and built, but NOT RUN yet: the "vrdump <prefix>" control command (hyp_quiet_test.py
+  --vrdump) saves both XR eye images of the next frame to <prefix>_L.ppm / _R.ppm (GPU readback in
+  PresentQueue::threadPresentVR). FIRST THING NEXT TIME: run it, then compare L/R on a 3D scene
+  (Oak's forest, not the title: the title background may be a flat picture).
+- If the dumps are identical too: check that the projection processor's VR loop really changes
+  drawData.modViewProjTransforms (the scene list is empty without frame matching, so the VR loop at the
+  end of ProjectionProcessor::process() does the work), and that RSPProcessCS uses viewProjTransforms
+  (it does: mul(viewProj, world)).
+- The last test run started very slowly (session after ~45 s) and wrote no dumps. A leftover
+  MetaXRSimulator.exe from earlier runs (PID 6648) was still running. Stop it first:
+  Stop-Process -Name MetaXRSimulator
+- Exit sometimes crashes (0xC0000005) after "[vr] session closed". Not investigated.
+
+HOW TO TEST (PC, hidden, never on the user's screen)
+- Set "volume": 5 in build\win-vr\data\settings.json before any run (it is set now).
+- python D:\AI\scratch\tmp\hyp_quiet_test.py D:/AI/hey-you-pikachu-pc/build/win-vr <out> --wait 32
+    --rom "D:/AI/Hey You, Pikachu! (USA).z64" --vrdump
+    --env "XR_RUNTIME_JSON=D:\AI\tools\meta-xr-simulator\meta_openxr_simulator.json" --env HYP_VR=1
+  Other options: --stereo (fbshot pairs with vrswap), HYP_VR_SCALE=<units per metre> (default 100),
+  HYP_VR_SWAP_EYES=1, HYP_VR_HZ.
+- The game log goes to <out>\log.txt. Look for the [vr] lines.
+- Debug log lines still in the code (remove later): "[vr] workload:" (rt64_workload_queue.cpp),
+  "[vr] projections:" (rt64_projection_processor.cpp) and "[vr] views token" (hyp_vr.cpp).
+
+FILES
+- docs/vr-plan.txt (this file)
+- src/vr/hyp_vr.h, src/vr/hyp_vr.cpp: the OpenXR session (RT64::VRInterface). Stubs when VR is off.
+- src/main/rt64_render_context.cpp: init before RT64 setup, apply_vr_config, shutdown.
+- src/debug_control.cpp: the vrswap and vrdump commands.
+- CMakeLists.txt: HYP_ENABLE_VR, OPENXR_SDK_DIR, OPENXR_ANDROID_LOADER.
+- tools/build_vr.bat
+- patches/rt64/0006-vr-stereo-openxr.patch: all RT64 changes (Vulkan hooks, rt64_vr.h, stereo render
+  loop, VR eye camera, VI output size, VR present path, eye dump, release hook). They are also applied
+  in lib/rt64 right now. tools/apply_patches.sh reapplies them.
+
+NEXT AFTER M1 IS PROVEN
+- Remove the debug logs, then frame interpolation up to the headset rate (now "display frames 1").
+- M2 Quest: android_glue must call xrInitializeLoaderKHR (JavaVM + activity) and create the instance with
+  XrInstanceCreateInfoAndroidKHR. A VR manifest (com.oculus.intent.category.VR, no window surface).
+  Then controller input through OpenXR actions.
+
+HAVE
+- OpenXR SDK 1.1.65: D:\AI\tools\openxr-sdk (headers + loader source).
+- Quest loader: libopenxr_loader.so (arm64), in the Angel's Table build output.
+- Meta XR Simulator: D:\AI\tools\meta-xr-simulator. To use it, set
+  XR_RUNTIME_JSON=D:\AI\tools\meta-xr-simulator\meta_openxr_simulator.json
+  for the test run only. The system runtime (Oculus) stays as it is.
+- Headset: Quest 3S. The user sideloads (developer mode on).
+
+TECHNICAL DESIGN (M1)
+A. plume (RT64's Vulkan layer), new patch 0006:
+   - VulkanExternalHooks covers: extra instance/device extensions, a
+     physical-device picker (from xrGetVulkanGraphicsDeviceKHR), and a
+     "device created" callback (instance, physical device, device, graphics
+     queue family and index) for XrGraphicsBindingVulkanKHR.
+   - Wrap the XR swapchain VkImages with the existing
+     VulkanTexture(device, VkImage) constructor.
+   - Hold the plume queue mutex around xrEndFrame, which uses the queue.
+B. src/vr/ (HYP_VR builds only):
+   - OpenXR instance (XR_KHR_vulkan_enable), session, LOCAL/STAGE space.
+   - One swapchain per eye, xrWaitFrame/BeginFrame/LocateViews/EndFrame.
+C. RT64 hooks:
+   - WorkloadQueue::threadRenderFrame already takes a camera per call.
+     Render each display frame twice, one per eye, into two override
+     targets (the same mechanism as interpolated frames).
+   - The projection processor gets a VR path for perspective projections:
+       view = interpolated game view * inverse(eye pose, metres scaled to
+              N64 units)
+       proj = asymmetric frustum from XrFovf, near/far taken from the
+              game's own projection
+     Both RT64 and OpenXR treat -Z as forward and +Y as up, so the axes
+     already match.
+   - The present thread blits each eye target into its XR swapchain image
+     instead of the window swapchain. The XR frame loop sets the pace.
+D. Build: a HeyYouPikachuVR target with the OpenXR loader (from the SDK
+   source on Windows, the prebuilt .so on Quest).
+E. Test: the PC build under the simulator, on a hidden desktop, at 5%
+   volume. Then the Quest APK, sideloaded.

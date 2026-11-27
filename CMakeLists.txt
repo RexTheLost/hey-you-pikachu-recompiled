@@ -168,6 +168,38 @@ target_link_libraries(HeyYouPikachuRecompiled PRIVATE
     whisper
 )
 
+# VR (OpenXR stereo 3D, docs/vr-plan.txt). Off for the normal builds; Quest builds turn it on.
+option(HYP_ENABLE_VR "OpenXR stereo 3D (VR builds)" OFF)
+set(OPENXR_SDK_DIR "${CMAKE_SOURCE_DIR}/../tools/openxr-sdk" CACHE PATH "Khronos OpenXR-SDK (headers + loader source)")
+set(OPENXR_ANDROID_LOADER "" CACHE FILEPATH "Prebuilt libopenxr_loader.so (arm64) for Quest builds")
+if (HYP_ENABLE_VR)
+    target_sources(HeyYouPikachuRecompiled PRIVATE ${CMAKE_SOURCE_DIR}/src/vr/hyp_vr.cpp)
+    target_compile_definitions(HeyYouPikachuRecompiled PRIVATE HYP_VR_ENABLED)
+    target_include_directories(HeyYouPikachuRecompiled PRIVATE
+        ${CMAKE_SOURCE_DIR}/src
+        ${OPENXR_SDK_DIR}/include
+        ${CMAKE_SOURCE_DIR}/lib/rt64/src/contrib/Vulkan-Headers/include
+        ${CMAKE_SOURCE_DIR}/lib/rt64/src/contrib/VulkanMemoryAllocator/include
+    )
+    if (ANDROID)
+        add_library(openxr_loader SHARED IMPORTED)
+        set_target_properties(openxr_loader PROPERTIES IMPORTED_LOCATION ${OPENXR_ANDROID_LOADER})
+        target_compile_definitions(HeyYouPikachuRecompiled PRIVATE HYP_VR_BUILD)
+    else()
+        set(BUILD_TESTS OFF CACHE BOOL "" FORCE)
+        set(BUILD_API_LAYERS OFF CACHE BOOL "" FORCE)
+        set(BUILD_CONFORMANCE_TESTS OFF CACHE BOOL "" FORCE)
+        add_subdirectory(${OPENXR_SDK_DIR} ${CMAKE_BINARY_DIR}/openxr EXCLUDE_FROM_ALL)
+        if (DYNAMIC_LOADER)
+            add_custom_command(TARGET HeyYouPikachuRecompiled POST_BUILD
+                COMMAND ${CMAKE_COMMAND} -E copy_if_different $<TARGET_FILE:openxr_loader> $<TARGET_FILE_DIR:HeyYouPikachuRecompiled>)
+        endif()
+    endif()
+    target_link_libraries(HeyYouPikachuRecompiled PRIVATE openxr_loader)
+else()
+    target_include_directories(HeyYouPikachuRecompiled PRIVATE ${CMAKE_SOURCE_DIR}/src)
+endif()
+
 # Recognizer test tool: asr_test <model.bin> <16-bit wav> "word one" "word two" ...
 if (NOT ANDROID)
     add_executable(asr_test ${CMAKE_SOURCE_DIR}/src/vru/asr_test.cpp ${CMAKE_SOURCE_DIR}/src/vru/asr.cpp)
