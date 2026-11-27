@@ -173,8 +173,17 @@ option(HYP_ENABLE_VR "OpenXR stereo 3D (VR builds)" OFF)
 set(OPENXR_SDK_DIR "${CMAKE_SOURCE_DIR}/../tools/openxr-sdk" CACHE PATH "Khronos OpenXR-SDK (headers + loader source)")
 set(OPENXR_ANDROID_LOADER "" CACHE FILEPATH "Prebuilt libopenxr_loader.so (arm64) for Quest builds")
 if (HYP_ENABLE_VR)
-    target_sources(HeyYouPikachuRecompiled PRIVATE ${CMAKE_SOURCE_DIR}/src/vr/hyp_vr.cpp)
+    # The VR panel's font (Roboto, Apache 2.0) embedded as a C array.
+    set(VR_FONT_TTF ${CMAKE_SOURCE_DIR}/lib/rt64/src/contrib/imgui/misc/fonts/Roboto-Medium.ttf)
+    add_custom_command(OUTPUT ${CMAKE_BINARY_DIR}/vr/vr_font_roboto.c ${CMAKE_BINARY_DIR}/vr/vr_font_roboto.h
+        COMMAND file_to_c ${VR_FONT_TTF} VrFontRoboto ${CMAKE_BINARY_DIR}/vr/vr_font_roboto.c ${CMAKE_BINARY_DIR}/vr/vr_font_roboto.h
+        DEPENDS ${VR_FONT_TTF} file_to_c)
+    target_sources(HeyYouPikachuRecompiled PRIVATE
+        ${CMAKE_SOURCE_DIR}/src/vr/hyp_vr.cpp
+        ${CMAKE_SOURCE_DIR}/src/vr/vr_ui.cpp
+        ${CMAKE_BINARY_DIR}/vr/vr_font_roboto.c)
     target_compile_definitions(HeyYouPikachuRecompiled PRIVATE HYP_VR_ENABLED)
+    target_include_directories(HeyYouPikachuRecompiled PRIVATE ${CMAKE_BINARY_DIR}/vr)
     target_include_directories(HeyYouPikachuRecompiled PRIVATE
         ${CMAKE_SOURCE_DIR}/src
         ${OPENXR_SDK_DIR}/include

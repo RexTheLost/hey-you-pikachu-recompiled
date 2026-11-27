@@ -100,8 +100,16 @@ namespace {
     std::atomic_bool duck_audio{ false };   // Talk held or an utterance in progress: game sound turned down
     size_t skip_left = 0;                   // phones: samples still to drop at the start of a recording
 
+    // VR bug reports: free dictation, recorded on the side (never reaches the game). Up to 30 s.
+    bool dictating = false;
+    std::vector<float> dictation;
+
     void feed_samples(const float* s, size_t n) {
         std::lock_guard lock{ mutex };
+        if (dictating) {
+            size_t room = size_t(rate) * 30 - std::min(dictation.size(), size_t(rate) * 30);
+            dictation.insert(dictation.end(), s, s + std::min(n, room));
+        }
         for (size_t i = 0; i < n; i++) {
             if (state == State::Recording && skip_left > 0) {
                 skip_left--;              // neither recorded nor counted by the voice detector
@@ -502,6 +510,33 @@ bool hyp::vru::mic_talk_update(bool talk_pressed) {
     // into the recording and were "heard" as words. Turn the game down while Talk is held.
     duck_audio = talk_pressed || state == State::Recording;
     return state != State::Idle;
+}
+
+void hyp::vru::mic_dictate_start() {
+    std::lock_guard lock{ mutex };
+    dictation.clear();
+    dictating = true;
+    duck_audio = true;
+}
+
+namespace { std::vector<float> dictation_injected; }   // test audio for the next dictation
+
+std::vector<float> hyp::vru::mic_dictate_stop() {
+    std::lock_guard lock{ mutex };
+    dictating = false;
+    duck_audio = false;
+    std::vector<float> out;
+    out.swap(dictation);
+    if (!dictation_injected.empty()) {
+        out.swap(dictation_injected);
+        dictation_injected.clear();
+    }
+    return out;
+}
+
+void hyp::vru::mic_dictate_inject(std::vector<float> pcm) {
+    std::lock_guard lock{ mutex };
+    dictation_injected = std::move(pcm);
 }
 
 void hyp::vru::mic_set_clip_dir(const std::string& dir) {

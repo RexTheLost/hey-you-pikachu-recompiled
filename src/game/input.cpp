@@ -29,6 +29,7 @@
 #include "hyp_touch.h"
 #endif
 #include "hyp_vru.h"
+#include "vr/hyp_vr.h"
 
 namespace {
     enum : uint16_t {
@@ -228,6 +229,25 @@ bool hyp::input::get_n64_input(int controller_num, uint16_t* buttons, float* x, 
                     case STICK_LEFT: sx = -1.0f; break;
                     case STICK_RIGHT: sx = 1.0f; break;
                     default: b |= (uint16_t)bit; break;
+                }
+            }
+        }
+    }
+
+    // VR: the headset controllers (nothing reaches the game while the VR panel is open).
+    {
+        uint16_t vb = 0;
+        float vx = 0.0f, vy = 0.0f;
+        bool panel_open = false;
+        if (hyp::vr::get_n64_input(&vb, &vx, &vy, &panel_open)) {
+            if (panel_open) {
+                b = 0;
+                sx = sy = 0.0f;
+            } else {
+                b |= vb;
+                if (std::abs(vx) + std::abs(vy) > std::abs(sx) + std::abs(sy)) {
+                    sx = vx;
+                    sy = vy;
                 }
             }
         }

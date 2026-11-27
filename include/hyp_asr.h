@@ -25,6 +25,9 @@ namespace hyp::asr {
     // phrases: the words the game is listening for, as spoken ("come here").
     Result recognize(const std::vector<float>& pcm, const std::vector<std::string>& phrases);
 
+    // Free dictation (VR bug reports): whole sentences, no word list, up to 30 s of audio.
+    std::string transcribe(const std::vector<float>& pcm);
+
     // 16-bit PCM WAV (any rate, mono or stereo) -> mono float at 16 kHz.
     bool read_wav(const std::filesystem::path& path, std::vector<float>& out);
 

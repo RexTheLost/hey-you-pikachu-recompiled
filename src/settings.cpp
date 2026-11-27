@@ -31,6 +31,8 @@ void hyp::settings::load(const std::filesystem::path& data_dir) {
         current.muted = j.value("muted", d.muted);
         current.controller = j.value("controller", d.controller);
         current.microphone = j.value("microphone", d.microphone);
+        current.vr_eye_scale = j.value("vr_eye_scale", d.vr_eye_scale);
+        current.vr_eye_set = j.value("vr_eye_set", d.vr_eye_set);
     } catch (const std::exception& e) {
         std::fprintf(stderr, "settings.json ignored: %s\n", e.what());
         current = Settings{};
@@ -49,6 +51,8 @@ void hyp::settings::save() {
         { "muted", current.muted },
         { "controller", current.controller },
         { "microphone", current.microphone },
+        { "vr_eye_scale", current.vr_eye_scale },
+        { "vr_eye_set", current.vr_eye_set },
     };
     std::ofstream out(settings_path);
     out << j.dump(4) << "\n";

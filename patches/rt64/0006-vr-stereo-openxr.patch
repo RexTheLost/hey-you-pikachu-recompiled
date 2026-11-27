@@ -22,7 +22,7 @@ index f7e1c26..df318cd 100644
          RenderHookDeinit *deinitHook = GetRenderHookDeinit();
          if (deinitHook != nullptr) {
 diff --git a/src/hle/rt64_present_queue.cpp b/src/hle/rt64_present_queue.cpp
-index 15f0bd7..311c9e0 100644
+index 15f0bd7..47dbdbf 100644
 --- a/src/hle/rt64_present_queue.cpp
 +++ b/src/hle/rt64_present_queue.cpp
 @@ -295,6 +295,33 @@ namespace RT64 {
@@ -59,7 +59,7 @@ index 15f0bd7..311c9e0 100644
              uint32_t swapChainIndex = 0;
              const bool presentFrame = (i < framesToPresent) && swapChainValid;
              if (presentFrame) {
-@@ -403,6 +430,136 @@ namespace RT64 {
+@@ -403,6 +430,146 @@ namespace RT64 {
          }
      }
  
@@ -162,6 +162,16 @@ index 15f0bd7..311c9e0 100644
 +            ext.presentGraphicsWorker->wait();
 +        }
 +
++        // Extra layers (the floating panel): their own submission.
++        commandList->begin();
++        const bool overlay = vr->recordOverlay(ext.device, commandList);
++        commandList->end();
++        if (overlay) {
++            const RenderCommandList *submitList = commandList;
++            ext.presentGraphicsWorker->commandQueue->executeCommandLists(&submitList, 1, nullptr, 0, nullptr, 0, ext.presentGraphicsWorker->commandFence.get());
++            ext.presentGraphicsWorker->wait();
++        }
++
 +        vr->endPresent(true);
 +
 +        if (dump) {
@@ -231,10 +241,10 @@ index 8858dac..9019b5f 100644
          std::mutex interpolatedMutex;
 diff --git a/src/hle/rt64_vr.h b/src/hle/rt64_vr.h
 new file mode 100644
-index 0000000..4fc65bb
+index 0000000..d8cac13
 --- /dev/null
 +++ b/src/hle/rt64_vr.h
-@@ -0,0 +1,74 @@
+@@ -0,0 +1,79 @@
 +//
 +// RT64 VR (Hey You, Pikachu VR port)
 +//
@@ -255,6 +265,7 @@ index 0000000..4fc65bb
 +    struct RenderDevice;
 +    struct RenderTexture;
 +    struct RenderFramebuffer;
++    struct RenderCommandList;
 +
 +    struct VREye {
 +        // Row-vector 4x4 (v' = v * M), applied after the game's view matrix: camera space -> eye space.
@@ -298,6 +309,10 @@ index 0000000..4fc65bb
 +
 +        // Debug: a path prefix when the next presented frame's eye images should be saved (<prefix>_L.ppm / _R.ppm).
 +        virtual bool takeDumpRequest(std::string &prefix) { return false; }
++
++        // Present thread, after both eyes: record extra GPU work (e.g. uploading the floating panel's pixels).
++        // Return true if anything was recorded; RT64 then submits and waits for it before endPresent().
++        virtual bool recordOverlay(RenderDevice *device, RenderCommandList *commandList) { return false; }
 +    };
 +
 +    inline VRInterface *&VRInterfaceSlot() {

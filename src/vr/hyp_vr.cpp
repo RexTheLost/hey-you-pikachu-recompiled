@@ -20,8 +20,16 @@
 #include <string>
 #include <vector>
 
+#include <thread>
+
+#ifdef _WIN32
+#include <windows.h>
+#endif
+
 #include "vulkan/rt64_vulkan.h"     // RT64's Vulkan layer (volk + vulkan headers, VulkanExternalHooks, VulkanTexture)
 #include "hle/rt64_vr.h"
+#include "hyp_settings.h"
+#include "vr_ui.h"
 
 #define XR_USE_GRAPHICS_API_VULKAN
 #ifdef __ANDROID__
@@ -137,6 +145,433 @@ namespace {
 
         std::mutex eventsMutex;
 
+        // ---------- controllers (OpenXR actions) ----------
+        XrActionSet actionSet = XR_NULL_HANDLE;
+        XrAction aAim = XR_NULL_HANDLE, aTrigger = XR_NULL_HANDLE, aSqueeze = XR_NULL_HANDLE, aStick = XR_NULL_HANDLE;
+        XrAction aA = XR_NULL_HANDLE, aB = XR_NULL_HANDLE, aX = XR_NULL_HANDLE, aY = XR_NULL_HANDLE, aMenu = XR_NULL_HANDLE;
+        XrPath hands[2] = { XR_NULL_PATH, XR_NULL_PATH };
+        XrSpace aimSpace[2] = { XR_NULL_HANDLE, XR_NULL_HANDLE };
+        bool actionsAttached = false;
+
+        struct Pad {                  // one frame of both controllers
+            float trigger[2] = {}, squeeze[2] = {};
+            float stickX[2] = {}, stickY[2] = {};
+            bool a = false, b = false, x = false, y = false, menu = false;
+            bool aimValid[2] = {};
+            XrPosef aim[2] = {};
+        };
+        Pad pad, prevPad;
+        std::mutex padMutex;          // the game thread reads the N64 mapping
+        uint16_t n64Buttons = 0;
+        float n64X = 0, n64Y = 0;
+        bool panelOpen = false;
+        XrTime lastInputTime = 0;
+        bool eyePopupDone = false;
+
+        XrAction makeAction(const char* name, const char* label, XrActionType type, bool perHand) {
+            XrActionCreateInfo ci{ XR_TYPE_ACTION_CREATE_INFO };
+            std::strcpy(ci.actionName, name);
+            std::strcpy(ci.localizedActionName, label);
+            ci.actionType = type;
+            if (perHand) {
+                ci.countSubactionPaths = 2;
+                ci.subactionPaths = hands;
+            }
+            XrAction a = XR_NULL_HANDLE;
+            check(xrCreateAction(actionSet, &ci, &a), name);
+            return a;
+        }
+
+        XrPath path(const char* s) {
+            XrPath p = XR_NULL_PATH;
+            xrStringToPath(instance, s, &p);
+            return p;
+        }
+
+        void createActions() {
+            XrActionSetCreateInfo si{ XR_TYPE_ACTION_SET_CREATE_INFO };
+            std::strcpy(si.actionSetName, "hyp");
+            std::strcpy(si.localizedActionSetName, "Hey You Pikachu");
+            if (XR_FAILED(xrCreateActionSet(instance, &si, &actionSet))) return;
+            hands[0] = path("/user/hand/left");
+            hands[1] = path("/user/hand/right");
+            aAim = makeAction("aim", "Aim", XR_ACTION_TYPE_POSE_INPUT, true);
+            aTrigger = makeAction("trigger", "Trigger (talk)", XR_ACTION_TYPE_FLOAT_INPUT, true);
+            aSqueeze = makeAction("squeeze", "Grip", XR_ACTION_TYPE_FLOAT_INPUT, true);
+            aStick = makeAction("stick", "Thumbstick", XR_ACTION_TYPE_VECTOR2F_INPUT, true);
+            aA = makeAction("a", "A", XR_ACTION_TYPE_BOOLEAN_INPUT, false);
+            aB = makeAction("b", "B", XR_ACTION_TYPE_BOOLEAN_INPUT, false);
+            aX = makeAction("x", "X (Start)", XR_ACTION_TYPE_BOOLEAN_INPUT, false);
+            aY = makeAction("y", "Y", XR_ACTION_TYPE_BOOLEAN_INPUT, false);
+            aMenu = makeAction("menu", "Menu", XR_ACTION_TYPE_BOOLEAN_INPUT, false);
+
+            std::vector<XrActionSuggestedBinding> b = {
+                { aAim, path("/user/hand/left/input/aim/pose") }, { aAim, path("/user/hand/right/input/aim/pose") },
+                { aTrigger, path("/user/hand/left/input/trigger/value") }, { aTrigger, path("/user/hand/right/input/trigger/value") },
+                { aSqueeze, path("/user/hand/left/input/squeeze/value") }, { aSqueeze, path("/user/hand/right/input/squeeze/value") },
+                { aStick, path("/user/hand/left/input/thumbstick") }, { aStick, path("/user/hand/right/input/thumbstick") },
+                { aA, path("/user/hand/right/input/a/click") }, { aB, path("/user/hand/right/input/b/click") },
+                { aX, path("/user/hand/left/input/x/click") }, { aY, path("/user/hand/left/input/y/click") },
+                { aMenu, path("/user/hand/left/input/menu/click") },
+            };
+            XrInteractionProfileSuggestedBinding sb{ XR_TYPE_INTERACTION_PROFILE_SUGGESTED_BINDING };
+            sb.interactionProfile = path("/interaction_profiles/oculus/touch_controller");
+            sb.suggestedBindings = b.data();
+            sb.countSuggestedBindings = (uint32_t)b.size();
+            check(xrSuggestInteractionProfileBindings(instance, &sb), "touch controller bindings");
+
+            // Fallback for runtimes without Touch bindings: trigger = select, menu = menu.
+            std::vector<XrActionSuggestedBinding> simple = {
+                { aAim, path("/user/hand/left/input/aim/pose") }, { aAim, path("/user/hand/right/input/aim/pose") },
+                { aA, path("/user/hand/right/input/select/click") }, { aMenu, path("/user/hand/left/input/menu/click") },
+            };
+            sb.interactionProfile = path("/interaction_profiles/khr/simple_controller");
+            sb.suggestedBindings = simple.data();
+            sb.countSuggestedBindings = (uint32_t)simple.size();
+            check(xrSuggestInteractionProfileBindings(instance, &sb), "simple controller bindings");
+        }
+
+        void attachActions() {
+            if (actionSet == XR_NULL_HANDLE || session == XR_NULL_HANDLE) return;
+            XrSessionActionSetsAttachInfo ai{ XR_TYPE_SESSION_ACTION_SETS_ATTACH_INFO };
+            ai.countActionSets = 1;
+            ai.actionSets = &actionSet;
+            if (XR_FAILED(xrAttachSessionActionSets(session, &ai))) return;
+            for (int h = 0; h < 2; h++) {
+                XrActionSpaceCreateInfo sc{ XR_TYPE_ACTION_SPACE_CREATE_INFO };
+                sc.action = aAim;
+                sc.subactionPath = hands[h];
+                sc.poseInActionSpace.orientation.w = 1.0f;
+                xrCreateActionSpace(session, &sc, &aimSpace[h]);
+            }
+            actionsAttached = true;
+        }
+
+        float getFloat(XrAction a, int hand) {
+            XrActionStateGetInfo gi{ XR_TYPE_ACTION_STATE_GET_INFO };
+            gi.action = a;
+            gi.subactionPath = hand >= 0 ? hands[hand] : XR_NULL_PATH;
+            XrActionStateFloat st{ XR_TYPE_ACTION_STATE_FLOAT };
+            return XR_SUCCEEDED(xrGetActionStateFloat(session, &gi, &st)) && st.isActive ? st.currentState : 0.0f;
+        }
+
+        bool getBool(XrAction a) {
+            XrActionStateGetInfo gi{ XR_TYPE_ACTION_STATE_GET_INFO };
+            gi.action = a;
+            XrActionStateBoolean st{ XR_TYPE_ACTION_STATE_BOOLEAN };
+            return XR_SUCCEEDED(xrGetActionStateBoolean(session, &gi, &st)) && st.isActive && st.currentState;
+        }
+
+        void readPad(XrTime time) {
+            prevPad = pad;
+            pad = Pad{};
+            if (!actionsAttached || state != XR_SESSION_STATE_FOCUSED) return;
+            const XrActiveActionSet active{ actionSet, XR_NULL_PATH };
+            XrActionsSyncInfo sync{ XR_TYPE_ACTIONS_SYNC_INFO };
+            sync.countActiveActionSets = 1;
+            sync.activeActionSets = &active;
+            if (XR_FAILED(xrSyncActions(session, &sync))) return;
+            for (int h = 0; h < 2; h++) {
+                pad.trigger[h] = getFloat(aTrigger, h);
+                pad.squeeze[h] = getFloat(aSqueeze, h);
+                XrActionStateGetInfo gi{ XR_TYPE_ACTION_STATE_GET_INFO };
+                gi.action = aStick;
+                gi.subactionPath = hands[h];
+                XrActionStateVector2f st{ XR_TYPE_ACTION_STATE_VECTOR2F };
+                if (XR_SUCCEEDED(xrGetActionStateVector2f(session, &gi, &st)) && st.isActive) {
+                    pad.stickX[h] = st.currentState.x;
+                    pad.stickY[h] = st.currentState.y;
+                }
+                XrSpaceLocation loc{ XR_TYPE_SPACE_LOCATION };
+                if (aimSpace[h] != XR_NULL_HANDLE && XR_SUCCEEDED(xrLocateSpace(aimSpace[h], localSpace, time, &loc))) {
+                    const XrSpaceLocationFlags need = XR_SPACE_LOCATION_POSITION_VALID_BIT | XR_SPACE_LOCATION_ORIENTATION_VALID_BIT;
+                    pad.aimValid[h] = (loc.locationFlags & need) == need;
+                    pad.aim[h] = loc.pose;
+                }
+            }
+            pad.a = getBool(aA);
+            pad.b = getBool(aB);
+            pad.x = getBool(aX);
+            pad.y = getBool(aY);
+            pad.menu = getBool(aMenu);
+            applyDebugInput();
+        }
+
+        // Debug (HYP_CONTROL "vrin <name> [seconds] [x y]"): fake controller input for hidden tests.
+        std::mutex debugMutex;
+        std::chrono::steady_clock::time_point dbgUntil[7];     // menu, a, b, x, y, trigger, stick
+        float dbgStickX = 0, dbgStickY = 0;
+
+        void applyDebugInput() {
+            std::scoped_lock lock(debugMutex);
+            const auto now = std::chrono::steady_clock::now();
+            if (now < dbgUntil[0]) pad.menu = true;
+            if (now < dbgUntil[1]) pad.a = true;
+            if (now < dbgUntil[2]) pad.b = true;
+            if (now < dbgUntil[3]) pad.x = true;
+            if (now < dbgUntil[4]) pad.y = true;
+            if (now < dbgUntil[5]) pad.trigger[1] = 1.0f;
+            if (now < dbgUntil[6]) { pad.stickX[1] = dbgStickX; pad.stickY[1] = dbgStickY; }
+        }
+
+        void debugInput(const std::string& name, float seconds, float x, float y) {
+            if (name == "words") { hyp::vr::ui::open_words_current(); return; }    // as if the Words button was pressed
+            static const char* names[] = { "menu", "a", "b", "x", "y", "trigger", "stick" };
+            std::scoped_lock lock(debugMutex);
+            for (int i = 0; i < 7; i++) {
+                if (name == names[i]) {
+                    dbgUntil[i] = std::chrono::steady_clock::now() + std::chrono::milliseconds((int)(seconds * 1000));
+                    if (i == 6) { dbgStickX = x; dbgStickY = y; }
+                }
+            }
+        }
+
+        // ---------- quad layers: the floating panel and the Words button ----------
+        struct QuadLayer {
+            const char* name = "";
+            int w = 0, h = 0;
+            XrSwapchain handle = XR_NULL_HANDLE;
+            std::vector<XrSwapchainImageVulkanKHR> images;
+            std::vector<std::unique_ptr<RT64::VulkanTexture>> textures;
+            std::unique_ptr<RT64::RenderBuffer> upload;
+            std::vector<uint8_t> pixels;      // RGBA w*h
+            bool pending = false;             // pixels changed: upload on the next frame
+            uint32_t acquired = UINT32_MAX;
+            bool everReleased = false;
+        };
+        QuadLayer quad{ "panel", hyp::vr::ui::W, hyp::vr::ui::H };
+        QuadLayer dock{ "words button", hyp::vr::ui::DOCK_W, hyp::vr::ui::DOCK_H };
+        XrPosef panelPose{};          // in LOCAL space
+        bool panelPlaced = false;
+        float panelHeight = hyp::vr::ui::WIDTH_M * hyp::vr::ui::H / hyp::vr::ui::W;
+        XrPosef dockPose{};           // above the left controller
+        bool dockVisible = false;
+        bool dockHovered = false;
+        int dockDrawnHover = -1;
+
+        void createQuad(QuadLayer& q, RT64::RenderDevice* device) {
+            uint32_t count = 0;
+            xrEnumerateSwapchainFormats(session, 0, &count, nullptr);
+            std::vector<int64_t> formats(count);
+            xrEnumerateSwapchainFormats(session, count, &count, formats.data());
+            int64_t format = 0;
+            for (int64_t f : formats) if (f == VK_FORMAT_R8G8B8A8_SRGB) format = f;
+            if (format == 0) for (int64_t f : formats) if (f == VK_FORMAT_R8G8B8A8_UNORM) format = f;
+            if (format == 0) { std::printf("[vr] no RGBA format for the %s\n", q.name); return; }
+
+            XrSwapchainCreateInfo ci{ XR_TYPE_SWAPCHAIN_CREATE_INFO };
+            ci.usageFlags = XR_SWAPCHAIN_USAGE_TRANSFER_DST_BIT | XR_SWAPCHAIN_USAGE_COLOR_ATTACHMENT_BIT | XR_SWAPCHAIN_USAGE_SAMPLED_BIT;
+            ci.format = format;
+            ci.sampleCount = 1;
+            ci.width = q.w;
+            ci.height = q.h;
+            ci.faceCount = 1;
+            ci.arraySize = 1;
+            ci.mipCount = 1;
+            if (XR_FAILED(xrCreateSwapchain(session, &ci, &q.handle))) { std::printf("[vr] %s swapchain failed\n", q.name); return; }
+            uint32_t n = 0;
+            xrEnumerateSwapchainImages(q.handle, 0, &n, nullptr);
+            q.images.assign(n, { XR_TYPE_SWAPCHAIN_IMAGE_VULKAN_KHR });
+            xrEnumerateSwapchainImages(q.handle, n, &n, reinterpret_cast<XrSwapchainImageBaseHeader*>(q.images.data()));
+            for (uint32_t i = 0; i < n; i++) {
+                auto tex = std::make_unique<RT64::VulkanTexture>(static_cast<RT64::VulkanDevice*>(device), q.images[i].image);
+                tex->desc.dimension = RT64::RenderTextureDimension::TEXTURE_2D;
+                tex->desc.format = RT64::RenderFormat::R8G8B8A8_UNORM;
+                tex->desc.width = q.w;
+                tex->desc.height = q.h;
+                tex->desc.depth = 1;
+                tex->desc.mipLevels = 1;
+                tex->fillSubresourceRange();
+                q.textures.push_back(std::move(tex));
+            }
+            q.upload = device->createBuffer(RT64::RenderBufferDesc::UploadBuffer(uint64_t(q.w) * q.h * 4));
+            std::printf("[vr] %s swapchain %dx%d\n", q.name, q.w, q.h);
+        }
+
+        // Records the upload of q's pending pixels (acquires an image; endPresent releases it).
+        bool uploadQuad(QuadLayer& q, RT64::RenderDevice* device, RT64::RenderCommandList* commandList) {
+            if (!q.pending) return false;
+            if (q.handle == XR_NULL_HANDLE) {
+                createQuad(q, device);
+                if (q.handle == XR_NULL_HANDLE || !q.upload) { q.pending = false; return false; }
+            }
+            XrSwapchainImageAcquireInfo ai{ XR_TYPE_SWAPCHAIN_IMAGE_ACQUIRE_INFO };
+            XrResult r;
+            {
+                std::scoped_lock lock(*queueMutex);
+                r = xrAcquireSwapchainImage(q.handle, &ai, &q.acquired);
+            }
+            if (XR_FAILED(r)) { q.acquired = UINT32_MAX; return false; }
+            XrSwapchainImageWaitInfo wi{ XR_TYPE_SWAPCHAIN_IMAGE_WAIT_INFO };
+            wi.timeout = XR_INFINITE_DURATION;
+            if (XR_FAILED(xrWaitSwapchainImage(q.handle, &wi))) return false;     // released in endPresent
+
+            void* dst = q.upload->map();
+            std::memcpy(dst, q.pixels.data(), std::min(q.pixels.size(), size_t(q.w) * q.h * 4));
+            q.upload->unmap();
+            q.pending = false;
+
+            RT64::VulkanTexture* tex = q.textures[q.acquired].get();
+            commandList->barriers(RT64::RenderBarrierStage::COPY, RT64::RenderTextureBarrier(tex, RT64::RenderTextureLayout::COPY_DEST));
+            commandList->copyTextureRegion(RT64::RenderTextureCopyLocation::Subresource(tex),
+                RT64::RenderTextureCopyLocation::PlacedFootprint(q.upload.get(), RT64::RenderFormat::R8G8B8A8_UNORM, q.w, q.h, 1, q.w));
+            commandList->barriers(RT64::RenderBarrierStage::GRAPHICS, RT64::RenderTextureBarrier(tex, RT64::RenderTextureLayout::COLOR_WRITE));
+            return true;
+        }
+
+        void releaseQuad(QuadLayer& q) {        // under the queue lock
+            if (q.acquired == UINT32_MAX) return;
+            XrSwapchainImageReleaseInfo ri{ XR_TYPE_SWAPCHAIN_IMAGE_RELEASE_INFO };
+            xrReleaseSwapchainImage(q.handle, &ri);
+            q.acquired = UINT32_MAX;
+            q.everReleased = true;
+        }
+
+        void destroyQuad(QuadLayer& q) {
+            q.textures.clear();
+            q.upload.reset();
+            if (q.handle != XR_NULL_HANDLE) xrDestroySwapchain(q.handle);
+            q.handle = XR_NULL_HANDLE;
+            q.everReleased = false;
+        }
+
+        // Place the panel 1 m in front of the head, a little below eye level, facing it (yaw only).
+        void placePanel(XrTime time) {
+            XrSpaceLocation head{ XR_TYPE_SPACE_LOCATION };
+            if (XR_FAILED(xrLocateSpace(viewSpace, localSpace, time, &head)) || !(head.locationFlags & XR_SPACE_LOCATION_ORIENTATION_VALID_BIT)) return;
+            const M3 r = quat_to_m3(head.pose.orientation);
+            const V3 fwd = mul(r, V3{ 0, 0, -1 });
+            const float yaw = std::atan2(-fwd.x, -fwd.z);
+            panelPose.orientation = { 0.0f, std::sin(yaw / 2), 0.0f, std::cos(yaw / 2) };
+            panelPose.position = { head.pose.position.x - std::sin(yaw) * 1.0f, head.pose.position.y - 0.15f, head.pose.position.z - std::cos(yaw) * 1.0f };
+            panelPlaced = true;
+        }
+
+        bool hitPanel(const XrPosef& aim, float& px, float& py) {
+            return hitQuad(aim, panelPose, hyp::vr::ui::WIDTH_M, panelHeight, hyp::vr::ui::W, hyp::vr::ui::H, px, py);
+        }
+
+        // Ray from an aim pose against a quad (pose, size in metres): canvas pixel (cw x ch canvas), or false.
+        bool hitQuad(const XrPosef& aim, const XrPosef& quadPose, float qw, float qh, int cw, int chh, float& px, float& py) {
+            const M3 ra = quat_to_m3(aim.orientation);
+            const V3 dir = mul(ra, V3{ 0, 0, -1 });
+            const M3 rp = quat_to_m3(quadPose.orientation);
+            const V3 n = mul(rp, V3{ 0, 0, 1 });
+            const V3 rel = { aim.position.x - quadPose.position.x, aim.position.y - quadPose.position.y, aim.position.z - quadPose.position.z };
+            const float denom = dir.x * n.x + dir.y * n.y + dir.z * n.z;
+            if (std::fabs(denom) < 1e-4f) return false;
+            const float t = -(rel.x * n.x + rel.y * n.y + rel.z * n.z) / denom;
+            if (t <= 0) return false;
+            const V3 hit = { rel.x + dir.x * t, rel.y + dir.y * t, rel.z + dir.z * t };
+            const V3 ax = mul(rp, V3{ 1, 0, 0 }), ay = mul(rp, V3{ 0, 1, 0 });
+            const float lx = hit.x * ax.x + hit.y * ax.y + hit.z * ax.z;
+            const float ly = hit.x * ay.x + hit.y * ay.y + hit.z * ay.z;
+            if (std::fabs(lx) > qw / 2 || std::fabs(ly) > qh / 2) return false;
+            px = (lx / qw + 0.5f) * cw;
+            py = (0.5f - ly / qh) * chh;
+            return true;
+        }
+
+        // The Words button: 7 cm above the left controller, facing the player, while the panel is closed.
+        void updateDock(bool panelOpen, bool& triggerTaken) {
+            triggerTaken = false;
+            const bool show = !panelOpen && pad.aimValid[0];
+            if (show) {
+                const M3 r = quat_to_m3(pad.aim[0].orientation);
+                const V3 up = mul(r, V3{ 0, 1, 0 }), fwd = mul(r, V3{ 0, 0, -1 });
+                dockPose.orientation = pad.aim[0].orientation;
+                dockPose.position = { pad.aim[0].position.x + up.x * 0.07f + fwd.x * 0.02f,
+                                      pad.aim[0].position.y + up.y * 0.07f + fwd.y * 0.02f,
+                                      pad.aim[0].position.z + up.z * 0.07f + fwd.z * 0.02f };
+            }
+            dockVisible = show;
+
+            bool hovered = false;
+            if (show && pad.aimValid[1]) {
+                float px, py;
+                const float w = hyp::vr::ui::DOCK_WIDTH_M, h = w * hyp::vr::ui::DOCK_H / hyp::vr::ui::DOCK_W;
+                hovered = hitQuad(pad.aim[1], dockPose, w, h, hyp::vr::ui::DOCK_W, hyp::vr::ui::DOCK_H, px, py);
+            }
+            dockHovered = hovered;
+            if (show && (dockDrawnHover != (int)hovered || dock.pixels.empty())) {
+                hyp::vr::ui::dock_pixels(hovered, dock.pixels);
+                dock.pending = true;
+                dockDrawnHover = (int)hovered;
+            }
+
+            // Pointing at the button: the right trigger presses it instead of talking.
+            if (hovered) {
+                triggerTaken = true;
+                if (pad.trigger[1] > 0.55f && prevPad.trigger[1] <= 0.55f) hyp::vr::ui::open_words_current();
+            }
+        }
+
+        // Per frame on the present thread: controllers -> panel or the N64 pad.
+        void updateInput(XrTime time) {
+            readPad(time);
+            const float dt = (lastInputTime != 0) ? std::clamp((time - lastInputTime) / 1e9f, 0.0f, 0.1f) : 0.0f;
+            lastInputTime = time;
+
+            if (!eyePopupDone && state == XR_SESSION_STATE_FOCUSED) {
+                eyePopupDone = true;
+                if (!hyp::settings::get().vr_eye_set) hyp::vr::ui::open_eye_distance(true);
+            }
+
+            hyp::vr::ui::Input in;
+            in.dt = dt;
+            in.menuPressed = pad.menu && !prevPad.menu;
+            const int stickHand = (std::fabs(pad.stickX[1]) + std::fabs(pad.stickY[1]) > std::fabs(pad.stickX[0]) + std::fabs(pad.stickY[0])) ? 1 : 0;
+            in.stickX = pad.stickX[stickHand];
+            in.stickY = pad.stickY[stickHand];
+            in.selectPressed = (pad.a && !prevPad.a) || (pad.x && !prevPad.x);
+            in.selectHeld = pad.a || pad.x;
+            in.backPressed = (pad.b && !prevPad.b) || (pad.y && !prevPad.y);
+            const bool trig[2] = { pad.trigger[0] > 0.55f, pad.trigger[1] > 0.55f };
+            const bool prevTrig[2] = { prevPad.trigger[0] > 0.55f, prevPad.trigger[1] > 0.55f };
+            in.triggerHeld = trig[0] || trig[1];
+            in.triggerPressed = (trig[0] && !prevTrig[0]) || (trig[1] && !prevTrig[1]);
+            in.triggerReleased = !in.triggerHeld && (prevTrig[0] || prevTrig[1]);
+
+            const bool wasOpen = hyp::vr::ui::visible();
+            if (wasOpen && !panelPlaced) placePanel(time);
+            if (wasOpen) {
+                for (int h : { 1, 0 }) {           // right hand first
+                    if (pad.aimValid[h] && hitPanel(pad.aim[h], in.px, in.py)) { in.pointing = true; break; }
+                }
+            }
+            const bool open = hyp::vr::ui::update(in);
+            if (open && !wasOpen) placePanel(time);
+            if (!open) panelPlaced = false;
+            if (hyp::vr::ui::take_recenter()) haveReference = false;
+            if (open && hyp::vr::ui::take_pixels(quad.pixels)) quad.pending = true;
+
+            bool rightTriggerTaken = false;
+            updateDock(open, rightTriggerTaken);
+
+            // The N64 pad (nothing while the panel is open).
+            uint16_t b = 0;
+            float x = 0, y = 0;
+            if (!open && !wasOpen && !hyp::vr::ui::visible()) {
+                x = pad.stickX[0];
+                y = pad.stickY[0];
+                if (pad.a) b |= 0x8000;                                   // A
+                if (pad.b) b |= 0x4000;                                   // B
+                if (pad.trigger[0] > 0.55f || (pad.trigger[1] > 0.55f && !rightTriggerTaken)) b |= 0x2000;  // Z = talk
+                if (pad.x) b |= 0x1000;                                   // Start
+                if (pad.squeeze[0] > 0.6f) b |= 0x0020;                   // L
+                if (pad.squeeze[1] > 0.6f) b |= 0x0010;                   // R
+                if (pad.stickY[1] > 0.5f) b |= 0x0008;                    // C up
+                if (pad.stickY[1] < -0.5f) b |= 0x0004;                   // C down
+                if (pad.stickX[1] < -0.5f) b |= 0x0002;                   // C left
+                if (pad.stickX[1] > 0.5f) b |= 0x0001;                    // C right
+            }
+            std::scoped_lock lock(padMutex);
+            n64Buttons = b;
+            n64X = x;
+            n64Y = y;
+            panelOpen = open;
+        }
+
         bool create() {
             if (const char* s = std::getenv("HYP_VR_SCALE")) unitsPerMetre = (float)std::atof(s);
 
@@ -217,6 +652,8 @@ namespace {
                 vkInstance = vki; vkPhysical = pd; vkDevice = dev; queueFamily = family; queueMutex = mutex;
                 createSession();
             };
+            createActions();
+            hyp::vr::ui::init();
             return true;
         }
 
@@ -243,7 +680,8 @@ namespace {
             check(xrCreateReferenceSpace(session, &rs, &localSpace), "xrCreateReferenceSpace LOCAL");
             rs.referenceSpaceType = XR_REFERENCE_SPACE_TYPE_VIEW;
             check(xrCreateReferenceSpace(session, &rs, &viewSpace), "xrCreateReferenceSpace VIEW");
-            std::printf("[vr] session created\n");
+            attachActions();
+            std::printf("[vr] session created%s\n", actionsAttached ? " (controllers ready)" : "");
         }
 
         void pollEvents() {
@@ -380,8 +818,22 @@ namespace {
             ViewSet set;
             set.views[0] = views[0];
             set.views[1] = views[1];
+
+            // Eye distance slider: move each eye toward/away from the point between them.
+            const V3 centre = { (views[0].pose.position.x + views[1].pose.position.x) * 0.5f,
+                                (views[0].pose.position.y + views[1].pose.position.y) * 0.5f,
+                                (views[0].pose.position.z + views[1].pose.position.z) * 0.5f };
+            const float dx = views[1].pose.position.x - views[0].pose.position.x;
+            const float dy = views[1].pose.position.y - views[0].pose.position.y;
+            const float dz = views[1].pose.position.z - views[0].pose.position.z;
+            hyp::vr::ui::set_ipd_metres(std::sqrt(dx * dx + dy * dy + dz * dz));
+            const float eyeScale = hyp::vr::ui::eye_scale();
+
             for (int e = 0; e < 2; e++) {
-                const XrPosef& p = views[e].pose;
+                XrPosef p = views[e].pose;
+                p.position.x = centre.x + (p.position.x - centre.x) * eyeScale;
+                p.position.y = centre.y + (p.position.y - centre.y) * eyeScale;
+                p.position.z = centre.z + (p.position.z - centre.z) * eyeScale;
                 M3 rc = mul(undoYaw, quat_to_m3(p.orientation));                      // eye -> camera rotation (column vectors)
                 static const float debugRoll = std::getenv("HYP_VR_DEBUG_ROLL") ? (float)std::atof(std::getenv("HYP_VR_DEBUG_ROLL")) : 0.0f;
                 if ((debugRoll != 0.0f) && (e == 0)) {                                 // debug: tilt the left eye (degrees)
@@ -469,6 +921,28 @@ namespace {
             if (dumpPrefix.empty()) return false;
             if (dumpFramesLeft <= 0) dumpFramesLeft = 8;
             prefix = dumpPrefix + "_f" + std::to_string(8 - dumpFramesLeft);
+            if (dumpFramesLeft == 8 && !dock.pixels.empty()) {
+                FILE* f = std::fopen((dumpPrefix + "_dock.ppm").c_str(), "wb");
+                if (f != nullptr) {
+                    std::fprintf(f, "P6\n%d %d\n255\n", dock.w, dock.h);
+                    for (size_t i = 0; i + 3 < dock.pixels.size(); i += 4) {
+                        const float a = dock.pixels[i + 3] / 255.0f;      // over a grey background
+                        uint8_t rgb[3];
+                        for (int c = 0; c < 3; c++) rgb[c] = (uint8_t)(dock.pixels[i + c] * a + 90 * (1 - a));
+                        std::fwrite(rgb, 1, 3, f);
+                    }
+                    std::fclose(f);
+                }
+            }
+            if (dumpFramesLeft == 8 && hyp::vr::ui::visible() && !quad.pixels.empty()) {
+                // The panel is a separate layer (composited by the headset): save its canvas too.
+                FILE* f = std::fopen((dumpPrefix + "_panel.ppm").c_str(), "wb");
+                if (f != nullptr) {
+                    std::fprintf(f, "P6\n%d %d\n255\n", hyp::vr::ui::W, hyp::vr::ui::H);
+                    for (size_t i = 0; i + 3 < quad.pixels.size(); i += 4) std::fwrite(&quad.pixels[i], 1, 3, f);
+                    std::fclose(f);
+                }
+            }
             if (--dumpFramesLeft == 0) dumpPrefix.clear();
             return true;
         }
@@ -488,6 +962,7 @@ namespace {
 
             // Pose for the next frames RT64 renders (about one frame ahead of this one).
             locate(predictedTime + predictedPeriod);
+            updateInput(predictedTime);
 
             if (!shouldRender) return false;
             if (!swapchainsReady) {
@@ -526,10 +1001,20 @@ namespace {
             return true;
         }
 
+        bool recordOverlay(RT64::RenderDevice* device, RT64::RenderCommandList* commandList) override {
+            if (!shouldRender) return false;
+            bool recorded = false;
+            if (hyp::vr::ui::visible()) recorded |= uploadQuad(quad, device, commandList);
+            if (dockVisible) recorded |= uploadQuad(dock, device, commandList);
+            return recorded;
+        }
+
         void endPresent(bool drawn) override {
             if (!frameBegun) return;
             frameBegun = false;
             std::scoped_lock lock(*queueMutex);
+            releaseQuad(quad);
+            releaseQuad(dock);
             bool released = true;
             for (int e = 0; e < 2; e++) {
                 if (eyes[e].acquired != UINT32_MAX) {
@@ -544,7 +1029,31 @@ namespace {
 
             XrCompositionLayerProjectionView pv[2];
             XrCompositionLayerProjection layer{ XR_TYPE_COMPOSITION_LAYER_PROJECTION };
-            const XrCompositionLayerBaseHeader* layers[] = { reinterpret_cast<XrCompositionLayerBaseHeader*>(&layer) };
+            XrCompositionLayerQuad panel{ XR_TYPE_COMPOSITION_LAYER_QUAD };
+            XrCompositionLayerQuad button{ XR_TYPE_COMPOSITION_LAYER_QUAD };
+            const XrCompositionLayerBaseHeader* layers[3] = { reinterpret_cast<XrCompositionLayerBaseHeader*>(&layer) };
+            uint32_t layerCount = 1;
+            const bool showPanel = hyp::vr::ui::visible() && panelPlaced && quad.everReleased;
+            if (showPanel) {
+                panel.layerFlags = XR_COMPOSITION_LAYER_BLEND_TEXTURE_SOURCE_ALPHA_BIT;
+                panel.space = localSpace;
+                panel.eyeVisibility = XR_EYE_VISIBILITY_BOTH;
+                panel.subImage.swapchain = quad.handle;
+                panel.subImage.imageRect = { { 0, 0 }, { hyp::vr::ui::W, hyp::vr::ui::H } };
+                panel.pose = panelPose;
+                panel.size = { hyp::vr::ui::WIDTH_M, panelHeight };
+                layers[layerCount++] = reinterpret_cast<XrCompositionLayerBaseHeader*>(&panel);
+            }
+            if (dockVisible && dock.everReleased && !hyp::vr::ui::visible()) {
+                button.layerFlags = XR_COMPOSITION_LAYER_BLEND_TEXTURE_SOURCE_ALPHA_BIT;
+                button.space = localSpace;
+                button.eyeVisibility = XR_EYE_VISIBILITY_BOTH;
+                button.subImage.swapchain = dock.handle;
+                button.subImage.imageRect = { { 0, 0 }, { dock.w, dock.h } };
+                button.pose = dockPose;
+                button.size = { hyp::vr::ui::DOCK_WIDTH_M, hyp::vr::ui::DOCK_WIDTH_M * dock.h / dock.w };
+                layers[layerCount++] = reinterpret_cast<XrCompositionLayerBaseHeader*>(&button);
+            }
             XrFrameEndInfo fe{ XR_TYPE_FRAME_END_INFO };
             fe.displayTime = predictedTime;
             fe.environmentBlendMode = XR_ENVIRONMENT_BLEND_MODE_OPAQUE;
@@ -563,7 +1072,7 @@ namespace {
                 layer.space = localSpace;
                 layer.viewCount = 2;
                 layer.views = pv;
-                fe.layerCount = 1;
+                fe.layerCount = layerCount;
                 fe.layers = layers;
             }
             check(xrEndFrame(session, &fe), "xrEndFrame");
@@ -572,6 +1081,12 @@ namespace {
         void releaseDeviceResources() override {
             running = false;
             swapchainsReady = false;
+            destroyQuad(quad);
+            destroyQuad(dock);
+            for (auto& s : aimSpace) {
+                if (s != XR_NULL_HANDLE) xrDestroySpace(s);
+                s = XR_NULL_HANDLE;
+            }
             for (auto& sc : eyes) {
                 sc.framebuffers.clear();
                 sc.textures.clear();
@@ -639,6 +1154,129 @@ unsigned hyp::vr::refresh_rate() {
 unsigned hyp::vr::eye_width() { return (g_xr != nullptr) ? g_xr->recommendedWidth : 1440; }
 
 bool hyp::vr::quit_requested() { return (g_xr != nullptr) && g_xr->quit; }
+
+bool hyp::vr::get_n64_input(uint16_t* buttons, float* x, float* y, bool* panel_open) {
+    if (g_xr == nullptr || !g_xr->running) return false;
+    std::scoped_lock lock(g_xr->padMutex);
+    *buttons = g_xr->n64Buttons;
+    *x = g_xr->n64X;
+    *y = g_xr->n64Y;
+    *panel_open = g_xr->panelOpen;
+    return true;
+}
+
+// ---------- bug reports ----------
+
+namespace {
+    const char* REPORT_HOST = "hyp-reports.pinball-leaderboard.workers.dev";
+
+    std::string json_string(const std::string& s) {
+        std::string out = "\"";
+        for (unsigned char c : s) {
+            switch (c) {
+                case '"': out += "\\\""; break;
+                case '\\': out += "\\\\"; break;
+                case '\n': out += "\\n"; break;
+                case '\r': break;
+                case '\t': out += "\\t"; break;
+                default:
+                    if (c < 0x20) { char b[8]; std::snprintf(b, sizeof(b), "\\u%04x", c); out += b; }
+                    else out += (char)c;
+            }
+        }
+        return out + "\"";
+    }
+
+    std::string report_json(const std::string& text) {
+        return "{\"kind\":\"vr-bug\",\"version\":" + json_string(hyp::vr::version_string()) +
+               ",\"device\":" + json_string(hyp::vr::device_string()) + ",\"text\":" + json_string(text) + "}";
+    }
+
+#ifdef __ANDROID__
+    std::mutex report_mutex;
+    std::vector<std::string> report_queue;     // Java (HypNative.takeReport) posts these
+#endif
+}
+
+#ifdef _WIN32
+#include <winhttp.h>
+#pragma comment(lib, "winhttp.lib")
+
+void hyp::vr::send_report(const std::string& text) {
+    const std::string body = report_json(text);
+    std::thread([body]() {
+        bool ok = false;
+        std::string reply;
+        HINTERNET s = WinHttpOpen(L"hyp-vr", WINHTTP_ACCESS_TYPE_AUTOMATIC_PROXY, WINHTTP_NO_PROXY_NAME, WINHTTP_NO_PROXY_BYPASS, 0);
+        std::wstring host(REPORT_HOST, REPORT_HOST + std::strlen(REPORT_HOST));
+        HINTERNET c = s ? WinHttpConnect(s, host.c_str(), INTERNET_DEFAULT_HTTPS_PORT, 0) : nullptr;
+        HINTERNET r = c ? WinHttpOpenRequest(c, L"POST", L"/report", nullptr, WINHTTP_NO_REFERER, WINHTTP_DEFAULT_ACCEPT_TYPES, WINHTTP_FLAG_SECURE) : nullptr;
+        const wchar_t* headers = L"Content-Type: application/json\r\nX-HYP-App: hyp-android\r\n";
+        if (r && WinHttpSendRequest(r, headers, (DWORD)-1L, (LPVOID)body.data(), (DWORD)body.size(), (DWORD)body.size(), 0) && WinHttpReceiveResponse(r, nullptr)) {
+            DWORD status = 0, size = sizeof(status);
+            WinHttpQueryHeaders(r, WINHTTP_QUERY_STATUS_CODE | WINHTTP_QUERY_FLAG_NUMBER, WINHTTP_HEADER_NAME_BY_INDEX, &status, &size, WINHTTP_NO_HEADER_INDEX);
+            DWORD avail = 0;
+            while (WinHttpQueryDataAvailable(r, &avail) && avail > 0) {
+                std::string chunk(avail, '\0');
+                DWORD got = 0;
+                WinHttpReadData(r, chunk.data(), avail, &got);
+                reply.append(chunk.data(), got);
+            }
+            ok = (status == 200) && reply.find("\"ok\":true") != std::string::npos;
+        }
+        if (r) WinHttpCloseHandle(r);
+        if (c) WinHttpCloseHandle(c);
+        if (s) WinHttpCloseHandle(s);
+        std::string id;
+        size_t p = reply.find("\"id\":");
+        if (p != std::string::npos) id = reply.substr(p + 5, reply.find_first_of(",}", p) - p - 5);
+        std::printf("[vr] report %s %s\n", ok ? "sent" : "failed", reply.c_str());
+        hyp::vr::ui::report_result(ok, ok ? "Report #" + id + " is in the inbox." : "No connection to the report inbox. Try again later.");
+    }).detach();
+}
+#elif defined(__ANDROID__)
+void hyp::vr::send_report(const std::string& text) {
+    std::scoped_lock lock(report_mutex);
+    report_queue.push_back(report_json(text));
+}
+
+std::string hyp::vr::take_report_json() {
+    std::scoped_lock lock(report_mutex);
+    if (report_queue.empty()) return {};
+    std::string j = report_queue.front();
+    report_queue.erase(report_queue.begin());
+    return j;
+}
+#else
+void hyp::vr::send_report(const std::string&) {
+    hyp::vr::ui::report_result(false, "Reports aren't supported on this platform.");
+}
+#endif
+
+std::string hyp::vr::version_string() {
+#ifdef HYP_VERSION_NAME
+    return std::string(HYP_VERSION_NAME) + " VR";
+#else
+    return std::string("PC VR dev (") + __DATE__ + ")";
+#endif
+}
+
+std::string hyp::vr::device_string() {
+    std::string runtime = "unknown runtime";
+    if (g_xr != nullptr && g_xr->instance != XR_NULL_HANDLE) {
+        XrInstanceProperties ip{ XR_TYPE_INSTANCE_PROPERTIES };
+        if (XR_SUCCEEDED(xrGetInstanceProperties(g_xr->instance, &ip))) runtime = ip.runtimeName;
+    }
+#ifdef __ANDROID__
+    return "Quest (" + runtime + ")";
+#else
+    return "PC (" + runtime + ")";
+#endif
+}
+
+void hyp::vr::debug_input(const std::string& name, float seconds, float x, float y) {
+    if (g_xr != nullptr) g_xr->debugInput(name, seconds, x, y);
+}
 
 void hyp::vr::toggle_swap_eyes() {
     if (g_xr != nullptr) g_xr->swapEyes = !g_xr->swapEyes;

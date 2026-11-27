@@ -221,6 +221,54 @@ static std::string collapse_repeats(const std::string& text) {
     return out;
 }
 
+std::string hyp::asr::transcribe(const std::vector<float>& pcm) {
+    std::string text;
+    std::lock_guard lock{ ctx_mutex };
+    if (ctx == nullptr || pcm.empty()) return text;
+
+    whisper_full_params params = whisper_full_default_params(WHISPER_SAMPLING_GREEDY);
+#ifdef __ANDROID__
+    params.n_threads = (int)std::clamp(std::thread::hardware_concurrency(), 1u, 4u);
+#else
+    params.n_threads = (int)std::clamp(std::thread::hardware_concurrency(), 1u, 8u);
+#endif
+    params.language = "en";
+    params.translate = false;
+    params.no_context = true;
+    params.no_timestamps = true;
+    params.single_segment = false;
+    params.print_special = false;
+    params.print_progress = false;
+    params.print_realtime = false;
+    params.print_timestamps = false;
+    params.suppress_blank = true;
+    params.suppress_nst = true;
+    params.temperature = 0.0f;
+    // The game's own names, so whisper spells them ("P. K. Choo" otherwise).
+    params.initial_prompt = "A bug report about Hey You, Pikachu! in VR. Pikachu, Professor Oak, PokeHelper, word list, text box.";
+
+    std::vector<float> audio(pcm.begin(), pcm.begin() + std::min(pcm.size(), size_t(sample_rate) * 30));
+    float peak = 0.0f;
+    for (float s : audio) peak = std::max(peak, std::abs(s));
+    if (peak > 0.0f) {
+        float gain = std::min(0.5f / peak, 20.0f);
+        if (gain > 1.0f) for (float& s : audio) s *= gain;
+    }
+    const size_t min_samples = sample_rate * 11 / 10;
+    if (audio.size() < min_samples) audio.resize(min_samples, 0.0f);
+    // Encode only about as much audio as there is (the default is a full 30 s window): much faster.
+    params.audio_ctx = std::clamp((int)(audio.size() * 50 / sample_rate) + 128, 256, 1500);
+
+    if (whisper_full(ctx, params, audio.data(), (int)audio.size()) == 0) {
+        for (int i = 0; i < whisper_full_n_segments(ctx); i++) {
+            text += whisper_full_get_segment_text(ctx, i);
+        }
+    }
+    text = collapse_repeats(text);
+    size_t first = text.find_first_not_of(' ');
+    return first == std::string::npos ? std::string() : text.substr(first);
+}
+
 hyp::asr::Result hyp::asr::recognize(const std::vector<float>& pcm, const std::vector<std::string>& phrases) {
     auto start = std::chrono::steady_clock::now();
     std::string text;

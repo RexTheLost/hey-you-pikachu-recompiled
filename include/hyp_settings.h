@@ -22,6 +22,9 @@ namespace hyp::settings {
         // Input ("" = first connected controller, "-" = keyboard only)
         std::string controller;
         std::string microphone;       // for the voice recognizer ("" = system default)
+        // VR
+        float vr_eye_scale = 1.0f;    // distance between the eyes, times the headset's own (eye distance slider)
+        bool vr_eye_set = false;      // the slider popped up once at the start (after that: menu only)
     };
 
     Settings& get();

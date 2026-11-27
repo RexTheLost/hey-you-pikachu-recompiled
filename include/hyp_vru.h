@@ -56,7 +56,10 @@ namespace hyp::vru {
     MicStatus mic_status();
     void mic_reopen();         // reopen the microphone (e.g. back from the background)
     bool mic_duck_audio();     // turn the game sound down now (Android, while Talk is held)
-    void mic_set_clip_dir(const std::string& dir); // keep each recording as a WAV there ("" = off)
+    void mic_set_clip_dir(const std::string& dir);
+    void mic_dictate_start();                 // VR bug report: record free speech on the side (not for the game)
+    std::vector<float> mic_dictate_stop();    // ... and take it (16 kHz mono, up to 30 s)
+    void mic_dictate_inject(std::vector<float> pcm);  // test: the next dictation returns this audio // keep each recording as a WAV there ("" = off)
     void mic_feed(const float* samples, size_t count); // 16 kHz mono audio from the app (Android)
     bool mic_take_restart();   // Android: the app should restart its recorder (clears the request)
     void mic_listen_start();   // game started listening (not for a picked word)

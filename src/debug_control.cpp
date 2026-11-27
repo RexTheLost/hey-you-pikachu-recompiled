@@ -114,6 +114,14 @@ namespace {
         } else if (cmd == "vrdump") {
             std::string path; std::getline(in >> std::ws, path);
             hyp::vr::request_dump(path);      // VR debug: saves both eye images of the next frame (<path>_L.ppm/_R.ppm)
+        } else if (cmd == "vrin") {
+            std::string name; float seconds = 0.15f, x = 0.0f, y = 0.0f;
+            in >> name >> seconds >> x >> y;
+            hyp::vr::debug_input(name, seconds, x, y);      // VR debug: fake controller input
+        } else if (cmd == "vrdictate") {
+            std::string path; std::getline(in >> std::ws, path);
+            std::vector<float> pcm;
+            if (hyp::asr::read_wav(path, pcm)) hyp::vru::mic_dictate_inject(std::move(pcm));   // next VR report recording
         } else if (cmd == "vrswap") {
             hyp::vr::toggle_swap_eyes();      // VR debug: the right eye goes into the framebuffer fbshot reads
         } else if (cmd == "micreopen") {
