@@ -49,32 +49,41 @@ M4 Culling + comfort: widen the game's cull, smooth the camera, set scale.
 M5 Talking: hold the trigger and use the headset mic, with live log
    checks like on the phone.
 
-STATUS (PAUSED 2026-11-26, middle of M1)
-===================================
-WORKING (tested with the Meta XR Simulator, hidden desktop, 5% volume):
+STATUS (2026-11-27, still in M1)
+================================
+WORKING (Meta XR Simulator, hidden desktop, 5% volume):
 - The VR build (tools\build_vr.bat -> build\win-vr, CMake HYP_ENABLE_VR=ON) starts OpenXR, gets past
-  RT64's Vulkan device creation, and creates the session. The session reaches FOCUSED (state 5).
-  Eye swapchains are 1680x1260 sRGB (mutable, drawn through a UNORM view).
-- Frames reach the headset: no xrEndFrame errors, and the game runs through the intro to Oak's forest.
-- RT64 runs its stereo branch (log: "[vr] workload: stereo 1") and gets correct, different per-eye
-  views from the XR module (log "[vr] views token N": eye0 tx +3, eye1 tx -3, asymmetric fovs).
-- With the run quitting through the game: "[vr] session closed", and sometimes exit code 0.
+  RT64's Vulkan device creation, and reaches FOCUSED. Eye swapchains: 1680x1260 sRGB.
+- Frames reach the headset with no xrEndFrame errors. The saved game (copy of the user's save in
+  build\win-vr\data\saves) loads, and gameplay runs: Pikachu at the bedroom window.
+- The "vrdump" eye images are real GPU readbacks of what the headset gets. That needed a texture->buffer
+  case in RT64's VulkanCommandList::copyTextureRegion, which only did uploads before (it crashed).
+- RT64 renders each eye separately into its own image ("[vr] present: right eye own target").
+- The GPU does use the processed viewProj matrices (HYP_VR_DEBUG_SQUASH=1 squeezes the 2D picture).
+- The game's projection matrix has the camera inside it (lookAt * perspective). RT64's view matrix is
+  just identity. applyVREyeCombined() in rt64_projection_processor.cpp now recovers the real camera
+  from the combined matrix. Log: s 1, 45 deg vertical fov, aspect 1.4, near 0.5, far 1017. So game units
+  are SMALL: the default HYP_VR_SCALE=100 units/m is far too big, try about 10-20.
+
+FINDINGS ABOUT THE GAME
+- Dialogue scenes and the title: the 3D background is often a SAVED IMAGE pasted back with 2 rectangle
+  draws. Only some frames draw live 3D (one perspective projection, transform 1, about 94-191 calls).
+  Pasted frames can never be stereo. Later (M4) we need to make the game redraw them, or project the
+  pasted image onto a flat panel.
 
 OPEN PROBLEM (where we stopped):
-- PROVE THE EYES DIFFER. fbshot (the N64 RAM framebuffer) shows the same picture for both eyes, even
-  with an exaggerated scale (HYP_VR_SCALE=2000). Most likely fbshot is not what the headset sees:
-  RT64 writes RAM copies at native resolution from the original matrices. Not proven yet.
-- Fix already written and built, but NOT RUN yet: the "vrdump <prefix>" control command (hyp_quiet_test.py
-  --vrdump) saves both XR eye images of the next frame to <prefix>_L.ppm / _R.ppm (GPU readback in
-  PresentQueue::threadPresentVR). FIRST THING NEXT TIME: run it, then compare L/R on a 3D scene
-  (Oak's forest, not the title: the title background may be a flat picture).
-- If the dumps are identical too: check that the projection processor's VR loop really changes
-  drawData.modViewProjTransforms (the scene list is empty without frame matching, so the VR loop at the
-  end of ProjectionProcessor::process() does the work), and that RSPProcessCS uses viewProjTransforms
-  (it does: mul(viewProj, world)).
-- The last test run started very slowly (session after ~45 s) and wrote no dumps. A leftover
-  MetaXRSimulator.exe from earlier runs (PID 6648) was still running. Stop it first:
-  Stop-Process -Name MetaXRSimulator
+- Both eyes are still pixel-identical, even with HYP_VR_DEBUG_ROLL=30 (tilts only the left eye), and
+  the live 3D in the headset image is broken: huge stretched triangles from the window frame and
+  curtain, Pikachu missing, view not where the game camera is. The broken picture did NOT change when
+  applyVREyeCombined was added, so the transform-1 edit probably isn't what draws most of the scene.
+- Next ideas, in order:
+  1. Find which viewProj slot the 3D vertices use. drawData.viewProjIndices is empty on the CPU at
+     process() time (the counter log shows 0), so read where RT64 fills/uploads it (rt64_state.cpp ~1080,
+     rt64_rsp.cpp) and whether patch 0004 (raw buffers) changed the index packing.
+  2. Check whether the RSP output (dstPos) from the first eye is reused by the second eye pass, i.e.
+     whether framebufferRenderer records draws only once per workload.
+  3. Compare with RT64's own debugger free camera (DebuggerCamera), which already swaps the camera per
+     scene: if it works for HYP, copy what it touches.
 - Exit sometimes crashes (0xC0000005) after "[vr] session closed". Not investigated.
 
 HOW TO TEST (PC, hidden, never on the user's screen)
@@ -82,11 +91,16 @@ HOW TO TEST (PC, hidden, never on the user's screen)
 - python D:\AI\scratch\tmp\hyp_quiet_test.py D:/AI/hey-you-pikachu-pc/build/win-vr <out> --wait 32
     --rom "D:/AI/Hey You, Pikachu! (USA).z64" --vrdump
     --env "XR_RUNTIME_JSON=D:\AI\tools\meta-xr-simulator\meta_openxr_simulator.json" --env HYP_VR=1
-  Other options: --stereo (fbshot pairs with vrswap), HYP_VR_SCALE=<units per metre> (default 100),
-  HYP_VR_SWAP_EYES=1, HYP_VR_HZ.
+  Other options: --steps start,down,a,a,a,a,a,a,a,a reaches gameplay with the copied save, --stereo
+  (fbshot pairs with vrswap), HYP_VR_SCALE=<units per metre> (default 100, too big),
+  HYP_VR_SWAP_EYES=1, HYP_VR_HZ, HYP_VR_DEBUG_ROLL=<deg> (tilt left eye), HYP_VR_DEBUG_SQUASH=1.
+- vrdump writes 8 frames in a row: <name>_f0.._f7_L/_R.ppm.
 - The game log goes to <out>\log.txt. Look for the [vr] lines.
 - Debug log lines still in the code (remove later): "[vr] workload:" (rt64_workload_queue.cpp),
-  "[vr] projections:" (rt64_projection_processor.cpp) and "[vr] views token" (hyp_vr.cpp).
+  "[vr] projections:", "[vr] transform", "[vr] camera from combined" (rt64_projection_processor.cpp),
+  "[vr] present:" (rt64_present_queue.cpp) and "[vr] views token" (hyp_vr.cpp).
+- 2026-11-27: the git branch file refs/heads/vr was zeroed (the PC died mid-commit). It was repaired to
+  cd65342. Backups of the broken files are in D:\AI\scratch\tmp\hyp-git-backup.
 
 FILES
 - docs/vr-plan.txt (this file)

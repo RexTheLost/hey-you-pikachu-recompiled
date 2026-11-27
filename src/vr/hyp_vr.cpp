@@ -382,7 +382,16 @@ namespace {
             set.views[1] = views[1];
             for (int e = 0; e < 2; e++) {
                 const XrPosef& p = views[e].pose;
-                const M3 rc = mul(undoYaw, quat_to_m3(p.orientation));                // eye -> camera rotation (column vectors)
+                M3 rc = mul(undoYaw, quat_to_m3(p.orientation));                      // eye -> camera rotation (column vectors)
+                static const float debugRoll = std::getenv("HYP_VR_DEBUG_ROLL") ? (float)std::atof(std::getenv("HYP_VR_DEBUG_ROLL")) : 0.0f;
+                if ((debugRoll != 0.0f) && (e == 0)) {                                 // debug: tilt the left eye (degrees)
+                    const float a = debugRoll / 57.2958f;
+                    M3 roll = {};
+                    roll.m[0][0] = std::cos(a); roll.m[0][1] = -std::sin(a);
+                    roll.m[1][0] = std::sin(a); roll.m[1][1] = std::cos(a);
+                    roll.m[2][2] = 1;
+                    rc = mul(rc, roll);
+                }
                 V3 t = mul(undoYaw, V3{ p.position.x - refPos.x, p.position.y - refPos.y, p.position.z - refPos.z });
                 t = { t.x * unitsPerMetre, t.y * unitsPerMetre, t.z * unitsPerMetre };
 
@@ -451,11 +460,16 @@ namespace {
         std::mutex dumpMutex;
         std::string dumpPrefix;
 
+        int dumpFramesLeft = 0;
+
+        // Eight frames in a row (<prefix>_f0.._f7): many HYP frames only paste a saved picture of the scene,
+        // so a single frame may not show live 3D.
         bool takeDumpRequest(std::string& prefix) override {
             std::scoped_lock lock(dumpMutex);
             if (dumpPrefix.empty()) return false;
-            prefix = dumpPrefix;
-            dumpPrefix.clear();
+            if (dumpFramesLeft <= 0) dumpFramesLeft = 8;
+            prefix = dumpPrefix + "_f" + std::to_string(8 - dumpFramesLeft);
+            if (--dumpFramesLeft == 0) dumpPrefix.clear();
             return true;
         }
 
