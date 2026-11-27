@@ -83,9 +83,35 @@ STEREO WORKS (2026-11-27)
 - The two eye images are framed differently because each eye's field of view is lopsided
   (simulator: left eye -54/+40 deg, right eye -40/+54). They overlap correctly in the headset.
 
+VR CONTROLS AND PANEL (2026-11-27, commit e849d43 + Quest build)
+- Controllers (OpenXR actions, Touch profile). N64 mapping in hyp_vr.cpp updateInput():
+    left stick = stick, A = A, B = B, either trigger = Z (talk), X = Start, grips = L/R,
+    right stick = C buttons, left menu button = VR menu.
+- The floating panel (src/vr/vr_ui.cpp, a quad layer 1 m in front, drawn on the CPU with Roboto via
+  stb_truetype) has: Menu (eye distance / word list / report a bug / recenter / close), Eye distance,
+  Word list (sets -> words, a word = say_word), Report a bug.
+  Point + trigger = click and drag. Thumbstick + A = the same without pointing. B = back.
+- Eye distance slider: 0-3x the headset's own eye distance (settings.json vr_eye_scale). It pops up
+  once on the first start (vr_eye_set), then only from the menu.
+- Words button: a pill above the left controller. The right ray + trigger opens the word list at the set
+  the game is listening for (the trigger doesn't talk while pointing at the button).
+- Spoken bug report: hold the trigger or A, speak, let go. mic_dictate_* records on the side,
+  asr::transcribe writes it down (prompted with the game's names), review, then Send. It goes to the
+  existing report inbox as kind "vr-bug": WinHTTP on PC, HypActivity.postVrReports on Quest. Read
+  reports with tools/fetch_reports.py. Verified on PC: report #8.
+
+QUEST BUILD (sideload)
+- HYP_VR=1 sh tools/build_android.sh   (native code -> build/android-vr; needs build/win/file_to_c.exe)
+- HYP_VR=1 sh tools/package_android.sh (-> build/android-vr/HeyYouPikachuVR.apk)
+- Package com.hyprecomp.pikachu.vr (aapt2 --rename-manifest-package), manifest
+  android/AndroidManifest-vr.xml: the launcher (ROM picker) is a flat window, and HypActivity has the
+  com.oculus.intent.category.VR filter (immersive). The OpenXR loader is the Khronos one
+  (D:\AI\tools\openxr-android\arm64-v8a\libopenxr_loader.so, copied from the Angel's Table build).
+- The VR package skips the self-updater (it only knows the phone APK) and the touch controls.
+
 STILL OPEN
-- The 2D HUD/text sits at the same place in both eyes (looks "at infinity", head-locked). M3: put it on
-  a floating panel.
+- The game's 2D HUD/text still sits at the same place in both eyes (head-locked). Later: copy it onto
+  a panel.
 - Pasted dialogue backgrounds stay flat (see FINDINGS). M4.
 - Culling at the wide eye edges not checked yet (M4).
 - Exit sometimes crashes (0xC0000005) after "[vr] session closed". Not investigated.

@@ -49,10 +49,56 @@ public class HypActivity extends SDLActivity {
         }
         super.onCreate(state);
         if (mBrokenLibraries || mLayout == null) return;
+        if (HypNative.isVrPackage(this)) {
+            // Quest: the controllers and the VR panel replace the touch controls.
+            Thread t = new Thread(this::postVrReports, "vr-reports");
+            t.setDaemon(true);
+            t.start();
+            return;
+        }
         controls = new ControlsView(this);
         mLayout.addView(controls, new ViewGroup.LayoutParams(
             ViewGroup.LayoutParams.MATCH_PARENT, ViewGroup.LayoutParams.MATCH_PARENT));
         hideBars();
+    }
+
+    /** Quest: posts the spoken bug reports the VR panel queues (HypNative.takeReport) to the report inbox. */
+    private void postVrReports() {
+        while (true) {
+            try { Thread.sleep(500); } catch (InterruptedException e) { return; }
+            String json;
+            try { json = HypNative.takeReport(); } catch (Throwable t) { continue; }
+            if (json == null) continue;
+            boolean ok = false;
+            String message;
+            try {
+                java.net.HttpURLConnection c = (java.net.HttpURLConnection) new java.net.URL(Updater.SERVER + "/report").openConnection();
+                c.setRequestMethod("POST");
+                c.setDoOutput(true);
+                c.setConnectTimeout(15000);
+                c.setReadTimeout(15000);
+                c.setRequestProperty("Content-Type", "application/json");
+                c.setRequestProperty("X-HYP-App", "hyp-android");
+                c.getOutputStream().write(json.getBytes(java.nio.charset.StandardCharsets.UTF_8));
+                int code = c.getResponseCode();
+                java.io.InputStream in = code < 400 ? c.getInputStream() : c.getErrorStream();
+                StringBuilder body = new StringBuilder();
+                if (in != null) {
+                    byte[] buf = new byte[4096];
+                    int n;
+                    while ((n = in.read(buf)) > 0) body.append(new String(buf, 0, n, java.nio.charset.StandardCharsets.UTF_8));
+                }
+                String b = body.toString();
+                ok = code == 200 && b.contains("\"ok\":true");
+                String id = "";
+                int p = b.indexOf("\"id\":");
+                if (p >= 0) id = b.substring(p + 5).replaceAll("[^0-9].*$", "");
+                message = ok ? "Report #" + id + " is in the inbox." : "The report inbox said no (" + code + ").";
+            } catch (Exception e) {
+                message = "No connection to the report inbox. Try again later.";
+            }
+            try { HypNative.reportResult(ok, message); } catch (Throwable ignored) { }
+        }
     }
 
     @Override

@@ -22,7 +22,7 @@ index f7e1c26..df318cd 100644
          RenderHookDeinit *deinitHook = GetRenderHookDeinit();
          if (deinitHook != nullptr) {
 diff --git a/src/hle/rt64_present_queue.cpp b/src/hle/rt64_present_queue.cpp
-index 15f0bd7..47dbdbf 100644
+index 15f0bd7..67956c0 100644
 --- a/src/hle/rt64_present_queue.cpp
 +++ b/src/hle/rt64_present_queue.cpp
 @@ -295,6 +295,33 @@ namespace RT64 {
@@ -206,6 +206,15 @@ index 15f0bd7..47dbdbf 100644
      void PresentQueue::skipInterpolation() {
          {
              std::unique_lock<std::mutex> interpolatedLock(ext.sharedResources->interpolatedMutex);
+@@ -510,7 +677,7 @@ namespace RT64 {
+                     }
+                 }
+ 
+-                skipPresent = skipPresent || ext.swapChain->isEmpty();
++                skipPresent = skipPresent || (ext.swapChain->isEmpty() && !VRActive());     // VR presents to the headset, not the window
+ 
+                 Present &present = presents[processCursor];
+                 ext.workloadQueue->waitForWorkloadId(present.workloadId);
 diff --git a/src/hle/rt64_present_queue.h b/src/hle/rt64_present_queue.h
 index 7bec992..0419c20 100644
 --- a/src/hle/rt64_present_queue.h

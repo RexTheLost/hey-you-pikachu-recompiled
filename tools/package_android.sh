@@ -2,6 +2,8 @@
 # Pack build/android/libmain.so + SDL + the Java side (android/) into a signed APK without
 # Gradle: aapt2 (resources + manifest), javac + d8 (classes.dex), zipalign, apksigner.
 #   tools/package_android.sh        -> build/android/HeyYouPikachu.apk
+#   HYP_VR=1 tools/package_android.sh -> build/android-vr/HeyYouPikachuVR.apk (Meta Quest, sideload;
+#                                       package com.hyprecomp.pikachu.vr, android/AndroidManifest-vr.xml)
 # The voice model is downloaded by the app on first start (HYP_APK_MODEL=1 packs it in as an
 # uncompressed asset instead). The ROM is never packed: the player picks their own copy.
 set -e
@@ -15,6 +17,19 @@ STRIP=$NDK/toolchains/llvm/prebuilt/windows-x86_64/bin/llvm-strip.exe
 CXXSHARED=$NDK/toolchains/llvm/prebuilt/windows-x86_64/sysroot/usr/lib/aarch64-linux-android/libc++_shared.so
 OUT=build/android/apk
 MODEL=models/ggml-base.en.bin
+NATIVE=build/android
+MANIFEST=android/AndroidManifest.xml
+APK=build/android/HeyYouPikachu.apk
+RENAME=""
+EXTRA_SO=""
+if [ "$HYP_VR" = "1" ]; then
+    NATIVE=build/android-vr
+    OUT=build/android-vr/apk
+    MANIFEST=android/AndroidManifest-vr.xml
+    APK=build/android-vr/HeyYouPikachuVR.apk
+    RENAME="--rename-manifest-package com.hyprecomp.pikachu.vr"
+    EXTRA_SO=${OPENXR_LOADER:-D:/AI/tools/openxr-android/arm64-v8a/libopenxr_loader.so}
+fi
 
 rm -rf "$OUT"
 mkdir -p "$OUT/res" "$OUT/gen" "$OUT/classes" "$OUT/assets" "$OUT/lib/arm64-v8a"
@@ -23,7 +38,7 @@ mkdir -p "$OUT/res" "$OUT/gen" "$OUT/classes" "$OUT/assets" "$OUT/lib/arm64-v8a"
 "$BT/aapt2.exe" compile --dir android/res -o "$OUT/res/res.zip"
 # HYP_APK_MODEL=1 packs the voice model in (a 150 MB APK); by default the app downloads it once.
 if [ "$HYP_APK_MODEL" = "1" ]; then cp "$MODEL" "$OUT/assets/ggml-base.en.bin"; fi
-"$BT/aapt2.exe" link -o "$OUT/base.apk" -I "$JAR" --manifest android/AndroidManifest.xml \
+"$BT/aapt2.exe" link -o "$OUT/base.apk" -I "$JAR" --manifest "$MANIFEST" $RENAME \
     --java "$OUT/gen" -A "$OUT/assets" -0 bin --min-sdk-version 26 --target-sdk-version 35 \
     "$OUT/res/res.zip"
 
@@ -35,7 +50,7 @@ CLASSES=$(cd "$OUT/classes" && find . -name "*.class" | sed 's|^\./||')
 (cd "$OUT/classes" && cmd //c "$(cygpath -w "$BT/d8.bat")" --release --min-api 26 --lib "$(cygpath -w "$JAR")" --output .. $CLASSES)
 
 # Native libraries (stripped of debug info)
-for so in build/android/libmain.so build/android/libSDL2.so "$CXXSHARED"; do
+for so in "$NATIVE/libmain.so" "$NATIVE/libSDL2.so" "$CXXSHARED" $EXTRA_SO; do
     "$STRIP" --strip-unneeded -o "$OUT/lib/arm64-v8a/$(basename "$so")" "$so"
 done
 
@@ -44,6 +59,6 @@ python -I tools/apk_add.py "$OUT/base.apk" "$OUT/unsigned.apk" "$OUT/classes.dex
 "$BT/zipalign.exe" -f -p 4 "$OUT/unsigned.apk" "$OUT/aligned.apk"
 cmd //c "$(cygpath -w "$BT/apksigner.bat")" sign --ks "$(cygpath -w "$KEYSTORE")" --ks-pass pass:android \
     --ks-key-alias androiddebugkey --key-pass pass:android \
-    --out "$(cygpath -w build/android/HeyYouPikachu.apk)" "$(cygpath -w "$OUT/aligned.apk")"
-ls -la build/android/HeyYouPikachu.apk
+    --out "$(cygpath -w "$APK")" "$(cygpath -w "$OUT/aligned.apk")"
+ls -la "$APK"
 echo APK OK

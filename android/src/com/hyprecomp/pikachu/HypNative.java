@@ -26,4 +26,13 @@ public final class HypNative {
     public static native boolean takeMicRestart();
     /** Live log: keep each Talk recording as a WAV in this folder (null = stop). */
     public static native void setClipDir(String dir);
+    /** VR build: the next spoken bug report to post (JSON), or null. */
+    public static native String takeReport();
+    /** VR build: tell the VR panel how sending went. */
+    public static native void reportResult(boolean ok, String message);
+
+    /** The Quest (VR) build is its own package: com.hyprecomp.pikachu.vr. */
+    public static boolean isVrPackage(android.content.Context c) {
+        return c.getPackageName().endsWith(".vr");
+    }
 }

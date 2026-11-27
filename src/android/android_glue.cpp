@@ -11,6 +11,10 @@
 
 #include "hyp_touch.h"
 #include "hyp_vru.h"
+#ifdef HYP_VR_ENABLED
+#include "vr/hyp_vr.h"
+#include "vr/vr_ui.h"
+#endif
 
 namespace {
     std::atomic<uint32_t> touch_buttons{ 0 };
@@ -57,6 +61,33 @@ JNIEXPORT void JNICALL Java_com_hyprecomp_pikachu_HypNative_setClipDir(JNIEnv* e
 
 JNIEXPORT jboolean JNICALL Java_com_hyprecomp_pikachu_HypNative_takeMicRestart(JNIEnv*, jclass) {
     return hyp::vru::mic_take_restart() ? JNI_TRUE : JNI_FALSE;
+}
+
+// VR (Quest build): spoken bug reports the Java side posts to the report inbox.
+JNIEXPORT jstring JNICALL Java_com_hyprecomp_pikachu_HypNative_takeReport(JNIEnv* env, jclass) {
+#ifdef HYP_VR_ENABLED
+    std::string j = hyp::vr::take_report_json();
+    return j.empty() ? nullptr : env->NewStringUTF(j.c_str());
+#else
+    (void)env;
+    return nullptr;
+#endif
+}
+
+JNIEXPORT void JNICALL Java_com_hyprecomp_pikachu_HypNative_reportResult(JNIEnv* env, jclass, jboolean ok, jstring message) {
+#ifdef HYP_VR_ENABLED
+    hyp::vr::ui::report_result(ok == JNI_TRUE, to_string(env, message));
+#else
+    (void)env; (void)ok; (void)message;
+#endif
+}
+
+JNIEXPORT jboolean JNICALL Java_com_hyprecomp_pikachu_HypNative_isVr(JNIEnv*, jclass) {
+#ifdef HYP_VR_ENABLED
+    return JNI_TRUE;
+#else
+    return JNI_FALSE;
+#endif
 }
 
 JNIEXPORT void JNICALL Java_com_hyprecomp_pikachu_HypNative_setButtons(JNIEnv*, jclass, jint buttons) {

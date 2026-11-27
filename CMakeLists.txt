@@ -175,9 +175,14 @@ set(OPENXR_ANDROID_LOADER "" CACHE FILEPATH "Prebuilt libopenxr_loader.so (arm64
 if (HYP_ENABLE_VR)
     # The VR panel's font (Roboto, Apache 2.0) embedded as a C array.
     set(VR_FONT_TTF ${CMAKE_SOURCE_DIR}/lib/rt64/src/contrib/imgui/misc/fonts/Roboto-Medium.ttf)
+    if (TARGET file_to_c)
+        set(VR_FILE_TO_C file_to_c)                    # built with RT64 (Windows)
+    else()
+        set(VR_FILE_TO_C ${RT64_HOST_FILE_TO_C})       # Android cross-build: the host tool (RT64's import is folder-local)
+    endif()
     add_custom_command(OUTPUT ${CMAKE_BINARY_DIR}/vr/vr_font_roboto.c ${CMAKE_BINARY_DIR}/vr/vr_font_roboto.h
-        COMMAND file_to_c ${VR_FONT_TTF} VrFontRoboto ${CMAKE_BINARY_DIR}/vr/vr_font_roboto.c ${CMAKE_BINARY_DIR}/vr/vr_font_roboto.h
-        DEPENDS ${VR_FONT_TTF} file_to_c)
+        COMMAND ${VR_FILE_TO_C} ${VR_FONT_TTF} VrFontRoboto ${CMAKE_BINARY_DIR}/vr/vr_font_roboto.c ${CMAKE_BINARY_DIR}/vr/vr_font_roboto.h
+        DEPENDS ${VR_FONT_TTF} ${VR_FILE_TO_C})
     target_sources(HeyYouPikachuRecompiled PRIVATE
         ${CMAKE_SOURCE_DIR}/src/vr/hyp_vr.cpp
         ${CMAKE_SOURCE_DIR}/src/vr/vr_ui.cpp
@@ -193,7 +198,8 @@ if (HYP_ENABLE_VR)
     if (ANDROID)
         add_library(openxr_loader SHARED IMPORTED)
         set_target_properties(openxr_loader PROPERTIES IMPORTED_LOCATION ${OPENXR_ANDROID_LOADER})
-        target_compile_definitions(HeyYouPikachuRecompiled PRIVATE HYP_VR_BUILD)
+        set(HYP_VR_VERSION "0.1" CACHE STRING "Quest build version (match android/AndroidManifest-vr.xml versionName)")
+        target_compile_definitions(HeyYouPikachuRecompiled PRIVATE HYP_VR_BUILD HYP_VERSION_NAME="${HYP_VR_VERSION}")
     else()
         set(BUILD_TESTS OFF CACHE BOOL "" FORCE)
         set(BUILD_API_LAYERS OFF CACHE BOOL "" FORCE)

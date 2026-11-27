@@ -35,6 +35,7 @@
 #ifdef __ANDROID__
 #define XR_USE_PLATFORM_ANDROID
 #include <jni.h>
+#include <SDL_system.h>     // SDL_AndroidGetJNIEnv / SDL_AndroidGetActivity
 #endif
 #include <openxr/openxr.h>
 #include <openxr/openxr_platform.h>
@@ -575,14 +576,32 @@ namespace {
         bool create() {
             if (const char* s = std::getenv("HYP_VR_SCALE")) unitsPerMetre = (float)std::atof(s);
 
-#ifdef __ANDROID__
-            // The Android loader must be initialised with the app's JavaVM and activity first (see android_glue.cpp).
-#endif
             std::vector<const char*> exts = { XR_KHR_VULKAN_ENABLE_EXTENSION_NAME };
-#ifdef __ANDROID__
-            exts.push_back(XR_KHR_ANDROID_CREATE_INSTANCE_EXTENSION_NAME);
-#endif
             XrInstanceCreateInfo ci{ XR_TYPE_INSTANCE_CREATE_INFO };
+#ifdef __ANDROID__
+            // The Android loader needs the app's Java VM and activity before anything else.
+            JNIEnv* env = static_cast<JNIEnv*>(SDL_AndroidGetJNIEnv());
+            JavaVM* vm = nullptr;
+            if (env != nullptr) env->GetJavaVM(&vm);
+            jobject activity = env != nullptr ? env->NewGlobalRef(static_cast<jobject>(SDL_AndroidGetActivity())) : nullptr;
+            if (vm == nullptr || activity == nullptr) {
+                std::printf("[vr] no Java VM / activity for OpenXR\n");
+                return false;
+            }
+            PFN_xrInitializeLoaderKHR initLoader = nullptr;
+            xrGetInstanceProcAddr(XR_NULL_HANDLE, "xrInitializeLoaderKHR", (PFN_xrVoidFunction*)&initLoader);
+            if (initLoader != nullptr) {
+                XrLoaderInitInfoAndroidKHR li{ XR_TYPE_LOADER_INIT_INFO_ANDROID_KHR };
+                li.applicationVM = vm;
+                li.applicationContext = activity;
+                check(initLoader(reinterpret_cast<const XrLoaderInitInfoBaseHeaderKHR*>(&li)), "xrInitializeLoaderKHR");
+            }
+            exts.push_back(XR_KHR_ANDROID_CREATE_INSTANCE_EXTENSION_NAME);
+            static XrInstanceCreateInfoAndroidKHR androidInfo{ XR_TYPE_INSTANCE_CREATE_INFO_ANDROID_KHR };
+            androidInfo.applicationVM = vm;
+            androidInfo.applicationActivity = activity;
+            ci.next = &androidInfo;
+#endif
             std::strcpy(ci.applicationInfo.applicationName, "Hey You Pikachu VR");
             ci.applicationInfo.applicationVersion = 1;
             std::strcpy(ci.applicationInfo.engineName, "RT64");

@@ -94,8 +94,12 @@ public class LauncherActivity extends Activity {
         }
         if (file(CRASH).exists()) showCrash();
         else if (!showUnexpectedExit()) {
-            text.setText("Checking for updates...");
-            updater.check(this::next);
+            if (HypNative.isVrPackage(this)) {
+                next();          // the Quest build is sideloaded: the updater only knows the phone APK
+            } else {
+                text.setText("Checking for updates...");
+                updater.check(this::next);
+            }
         }
     }
 
