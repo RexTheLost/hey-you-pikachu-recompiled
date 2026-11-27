@@ -49,7 +49,7 @@ M4 Culling + comfort: widen the game's cull, smooth the camera, set scale.
 M5 Talking: hold the trigger and use the headset mic, with live log
    checks like on the phone.
 
-STATUS (2026-11-27, still in M1)
+STATUS (2026-11-27, M1 stereo working on PC)
 ================================
 WORKING (Meta XR Simulator, hidden desktop, 5% volume):
 - The VR build (tools\build_vr.bat -> build\win-vr, CMake HYP_ENABLE_VR=ON) starts OpenXR, gets past
@@ -63,7 +63,7 @@ WORKING (Meta XR Simulator, hidden desktop, 5% volume):
 - The game's projection matrix has the camera inside it (lookAt * perspective). RT64's view matrix is
   just identity. applyVREyeCombined() in rt64_projection_processor.cpp now recovers the real camera
   from the combined matrix. Log: s 1, 45 deg vertical fov, aspect 1.4, near 0.5, far 1017. So game units
-  are SMALL: the default HYP_VR_SCALE=100 units/m is far too big, try about 10-20.
+  are SMALL: HYP_VR_SCALE is now 12 units/m by default.
 
 FINDINGS ABOUT THE GAME
 - Dialogue scenes and the title: the 3D background is often a SAVED IMAGE pasted back with 2 rectangle
@@ -71,20 +71,26 @@ FINDINGS ABOUT THE GAME
   Pasted frames can never be stereo. Later (M4) we need to make the game redraw them, or project the
   pasted image onto a flat panel.
 
-OPEN PROBLEM (where we stopped):
-- Both eyes are still pixel-identical, even with HYP_VR_DEBUG_ROLL=30 (tilts only the left eye), and
-  the live 3D in the headset image is broken: huge stretched triangles from the window frame and
-  curtain, Pikachu missing, view not where the game camera is. The broken picture did NOT change when
-  applyVREyeCombined was added, so the transform-1 edit probably isn't what draws most of the scene.
-- Next ideas, in order:
-  1. Find which viewProj slot the 3D vertices use. drawData.viewProjIndices is empty on the CPU at
-     process() time (the counter log shows 0), so read where RT64 fills/uploads it (rt64_state.cpp ~1080,
-     rt64_rsp.cpp) and whether patch 0004 (raw buffers) changed the index packing.
-  2. Check whether the RSP output (dstPos) from the first eye is reused by the second eye pass, i.e.
-     whether framebufferRenderer records draws only once per workload.
-  3. Compare with RT64's own debugger free camera (DebuggerCamera), which already swaps the camera per
-     scene: if it works for HYP, copy what it touches.
+STEREO WORKS (2026-11-27)
+- Both headset eyes now show correct, different views of live gameplay (bedroom, Pikachu outside the
+  window). Proof: D:\AI\scratch\tmp\vr_play8 (walk1_f5_L/_R.ppm).
+- Bug 1 (identical eyes): PresentQueue::threadPresentVR recorded both eyes' VI draws in one command list.
+  The VI renderer has ONE descriptor set, so both draws read the last-bound (right eye) texture. Fix:
+  one begin/execute/wait per eye.
+- Bug 2 (broken close-up geometry): the eye distance was ~8x too big. The game world is about 12 units
+  per metre (Pikachu, ~0.4 m tall, is ~5 units; the near plane is 0.5). The default HYP_VR_SCALE is now 12.
+  The headset's own IPD (6 cm) is used.
+- The two eye images are framed differently because each eye's field of view is lopsided
+  (simulator: left eye -54/+40 deg, right eye -40/+54). They overlap correctly in the headset.
+
+STILL OPEN
+- The 2D HUD/text sits at the same place in both eyes (looks "at infinity", head-locked). M3: put it on
+  a floating panel.
+- Pasted dialogue backgrounds stay flat (see FINDINGS). M4.
+- Culling at the wide eye edges not checked yet (M4).
 - Exit sometimes crashes (0xC0000005) after "[vr] session closed". Not investigated.
+- Then: remove the debug logs, frame interpolation up to the headset rate (now "display frames 1"),
+  M2 Quest build.
 
 HOW TO TEST (PC, hidden, never on the user's screen)
 - Set "volume": 5 in build\win-vr\data\settings.json before any run (it is set now).
@@ -92,7 +98,7 @@ HOW TO TEST (PC, hidden, never on the user's screen)
     --rom "D:/AI/Hey You, Pikachu! (USA).z64" --vrdump
     --env "XR_RUNTIME_JSON=D:\AI\tools\meta-xr-simulator\meta_openxr_simulator.json" --env HYP_VR=1
   Other options: --steps start,down,a,a,a,a,a,a,a,a reaches gameplay with the copied save, --stereo
-  (fbshot pairs with vrswap), HYP_VR_SCALE=<units per metre> (default 100, too big),
+  (fbshot pairs with vrswap), HYP_VR_SCALE=<units per metre> (default 12),
   HYP_VR_SWAP_EYES=1, HYP_VR_HZ, HYP_VR_DEBUG_ROLL=<deg> (tilt left eye), HYP_VR_DEBUG_SQUASH=1.
 - vrdump writes 8 frames in a row: <name>_f0.._f7_L/_R.ppm.
 - The game log goes to <out>\log.txt. Look for the [vr] lines.

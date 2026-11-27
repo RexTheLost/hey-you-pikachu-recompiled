@@ -22,7 +22,7 @@ index f7e1c26..df318cd 100644
          RenderHookDeinit *deinitHook = GetRenderHookDeinit();
          if (deinitHook != nullptr) {
 diff --git a/src/hle/rt64_present_queue.cpp b/src/hle/rt64_present_queue.cpp
-index 15f0bd7..5b5a98e 100644
+index 15f0bd7..311c9e0 100644
 --- a/src/hle/rt64_present_queue.cpp
 +++ b/src/hle/rt64_present_queue.cpp
 @@ -295,6 +295,33 @@ namespace RT64 {
@@ -59,7 +59,7 @@ index 15f0bd7..5b5a98e 100644
              uint32_t swapChainIndex = 0;
              const bool presentFrame = (i < framesToPresent) && swapChainValid;
              if (presentFrame) {
-@@ -403,6 +430,135 @@ namespace RT64 {
+@@ -403,6 +430,136 @@ namespace RT64 {
          }
      }
  
@@ -94,12 +94,20 @@ index 15f0bd7..5b5a98e 100644
 +            return;
 +        }
 +
++        // Debug dump request (both eye images, exactly what the headset gets).
++        std::string dumpPrefix;
++        const bool dump = vr->takeDumpRequest(dumpPrefix);
++        std::unique_ptr<RenderBuffer> dumpBuffers[2];
++        uint32_t dumpRowWidth[2] = {};
++
++        // One submission per eye: the VI renderer has a single descriptor set, so recording both eyes into one
++        // command list made both draws sample the last-bound (right eye) texture.
 +        RenderCommandList *commandList = ext.presentGraphicsWorker->commandList.get();
-+        commandList->begin();
 +        RenderTarget *eyeTargets[2] = { leftTarget, rightTarget };
 +        for (uint32_t eye = 0; eye < 2; eye++) {
 +            const VRTarget &output = outputs[eye];
 +            RenderTarget *target = eyeTargets[eye];
++            commandList->begin();
 +            commandList->barriers(RenderBarrierStage::GRAPHICS, RenderTextureBarrier(output.texture, RenderTextureLayout::COLOR_WRITE));
 +
 +            VIRenderer::RenderParams renderParams;
@@ -138,16 +146,8 @@ index 15f0bd7..5b5a98e 100644
 +            }
 +
 +            commandList->barriers(RenderBarrierStage::NONE, RenderTextureBarrier(output.texture, RenderTextureLayout::COLOR_WRITE));
-+        }
 +
-+        // Debug dump: copy both eye images (exactly what the headset gets) to readback buffers.
-+        std::string dumpPrefix;
-+        const bool dump = vr->takeDumpRequest(dumpPrefix);
-+        std::unique_ptr<RenderBuffer> dumpBuffers[2];
-+        uint32_t dumpRowWidth[2] = {};
-+        if (dump) {
-+            for (uint32_t eye = 0; eye < 2; eye++) {
-+                const VRTarget &output = outputs[eye];
++            if (dump) {
 +                dumpRowWidth[eye] = (output.width + 63) & ~63u;     // 256-byte aligned rows
 +                dumpBuffers[eye] = ext.device->createBuffer(RenderBufferDesc::ReadbackBuffer(uint64_t(dumpRowWidth[eye]) * output.height * 4));
 +                commandList->barriers(RenderBarrierStage::COPY, RenderTextureBarrier(output.texture, RenderTextureLayout::COPY_SOURCE));
@@ -155,12 +155,13 @@ index 15f0bd7..5b5a98e 100644
 +                    RenderTextureCopyLocation::Subresource(output.texture));
 +                commandList->barriers(RenderBarrierStage::GRAPHICS, RenderTextureBarrier(output.texture, RenderTextureLayout::COLOR_WRITE));
 +            }
++
++            commandList->end();
++            const RenderCommandList *submitList = commandList;
++            ext.presentGraphicsWorker->commandQueue->executeCommandLists(&submitList, 1, nullptr, 0, nullptr, 0, ext.presentGraphicsWorker->commandFence.get());
++            ext.presentGraphicsWorker->wait();
 +        }
 +
-+        commandList->end();
-+        const RenderCommandList *submitList = commandList;
-+        ext.presentGraphicsWorker->commandQueue->executeCommandLists(&submitList, 1, nullptr, 0, nullptr, 0, ext.presentGraphicsWorker->commandFence.get());
-+        ext.presentGraphicsWorker->wait();
 +        vr->endPresent(true);
 +
 +        if (dump) {

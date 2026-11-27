@@ -105,7 +105,7 @@ namespace {
         std::atomic<bool> running{ false };
         std::atomic<bool> quit{ false };
         uint32_t recommendedWidth = 1440, recommendedHeight = 1584;
-        float unitsPerMetre = 100.0f;
+        float unitsPerMetre = 12.0f;      // game units per metre: Pikachu (~0.4 m) is ~5 units tall
 
         // Vulkan, from RT64's device creation.
         VkInstance vkInstance = VK_NULL_HANDLE;
