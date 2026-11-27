@@ -29,6 +29,7 @@
 #include "vulkan/rt64_vulkan.h"     // RT64's Vulkan layer (volk + vulkan headers, VulkanExternalHooks, VulkanTexture)
 #include "hle/rt64_vr.h"
 #include "hyp_settings.h"
+#include "hyp_trace.h"
 #include "vr_ui.h"
 
 #define XR_USE_GRAPHICS_API_VULKAN
@@ -450,6 +451,49 @@ namespace {
 
         bool hitPanel(const XrPosef& aim, float& px, float& py) {
             return hitQuad(aim, panelPose, hyp::vr::ui::WIDTH_M, panelHeight, hyp::vr::ui::W, hyp::vr::ui::H, px, py);
+        }
+
+        // ---------- flat screen for painted scenes ----------
+        static constexpr float FLAT_WIDTH_M = 3.6f;      // 3.6 m wide, 2.5 m away
+        static constexpr float FLAT_DISTANCE_M = 2.5f;
+        bool flatFrame = false;
+        bool flatPlaced = false;
+        XrPosef flatPose{};
+
+        void placeFlatScreen(XrTime time) {
+            XrSpaceLocation head{ XR_TYPE_SPACE_LOCATION };
+            if (XR_FAILED(xrLocateSpace(viewSpace, localSpace, time, &head)) || !(head.locationFlags & XR_SPACE_LOCATION_ORIENTATION_VALID_BIT)) {
+                flatPose.orientation.w = 1.0f;
+                flatPose.position = { 0.0f, 0.0f, -FLAT_DISTANCE_M };
+                flatPlaced = true;
+                return;
+            }
+            const M3 r = quat_to_m3(head.pose.orientation);
+            const V3 fwd = mul(r, V3{ 0, 0, -1 });
+            const float yaw = std::atan2(-fwd.x, -fwd.z);
+            flatPose.orientation = { 0.0f, std::sin(yaw / 2), 0.0f, std::cos(yaw / 2) };
+            flatPose.position = { head.pose.position.x - std::sin(yaw) * FLAT_DISTANCE_M, head.pose.position.y,
+                                  head.pose.position.z - std::cos(yaw) * FLAT_DISTANCE_M };
+            flatPlaced = true;
+        }
+
+        // Painted scenes: 3D characters on a flat painting can't be stereo (they'd float off the painted ground).
+        bool flatScene() override {
+            static const std::vector<int> stages = [] {
+                std::vector<int> s;
+                const char* env = std::getenv("HYP_VR_FLAT_STAGES");      // e.g. "19,23"
+                std::string list = env ? env : "19";                       // 19 = the title screen
+                size_t pos = 0;
+                while (pos < list.size()) {
+                    s.push_back(std::atoi(list.c_str() + pos));
+                    size_t c = list.find(',', pos);
+                    if (c == std::string::npos) break;
+                    pos = c + 1;
+                }
+                return s;
+            }();
+            const int stage = hyp_current_stage();
+            return std::find(stages.begin(), stages.end(), stage) != stages.end();
         }
 
         // Ray from an aim pose against a quad (pose, size in metres): canvas pixel (cw x ch canvas), or false.
@@ -940,6 +984,41 @@ namespace {
             if (dumpPrefix.empty()) return false;
             if (dumpFramesLeft <= 0) dumpFramesLeft = 8;
             prefix = dumpPrefix + "_f" + std::to_string(8 - dumpFramesLeft);
+            if (dumpFramesLeft == 8) {
+                // Where everything is (LOCAL space), so a tool can composite the layers like the headset does.
+                FILE* f = std::fopen((dumpPrefix + "_layout.json").c_str(), "wb");
+                if (f != nullptr) {
+                    auto pose = [&](const XrPosef& p) {
+                        std::fprintf(f, "{\"p\":[%f,%f,%f],\"q\":[%f,%f,%f,%f]}", p.position.x, p.position.y, p.position.z,
+                            p.orientation.x, p.orientation.y, p.orientation.z, p.orientation.w);
+                    };
+                    std::fprintf(f, "{\"eyes\":[");
+                    for (int e = 0; e < 2; e++) {
+                        const RT64::VREye& eye = submitting.rt64.eyes[e];
+                        std::fprintf(f, "%s{\"pose\":", e ? "," : "");
+                        pose(submitting.views[e].pose);
+                        std::fprintf(f, ",\"tan\":[%f,%f,%f,%f]}", eye.tanLeft, eye.tanRight, eye.tanUp, eye.tanDown);
+                    }
+                    std::fprintf(f, "],\"panel\":{\"visible\":%s,\"pose\":", (hyp::vr::ui::visible() && panelPlaced) ? "true" : "false");
+                    pose(panelPose);
+                    std::fprintf(f, ",\"size\":[%f,%f]},\"dock\":{\"visible\":%s,\"pose\":", hyp::vr::ui::WIDTH_M, panelHeight,
+                        (dockVisible && !hyp::vr::ui::visible()) ? "true" : "false");
+                    pose(dockPose);
+                    std::fprintf(f, ",\"size\":[%f,%f]},\"flat\":{\"visible\":%s,\"pose\":", hyp::vr::ui::DOCK_WIDTH_M,
+                        hyp::vr::ui::DOCK_WIDTH_M * dock.h / dock.w, flatFrame ? "true" : "false");
+                    pose(flatPose);
+                    std::fprintf(f, ",\"size\":[%f,%f]}}\n", FLAT_WIDTH_M, FLAT_WIDTH_M * eyes[0].height / std::max(1u, eyes[0].width));
+                    std::fclose(f);
+                }
+            }
+            for (QuadLayer* q : { &quad, &dock }) {      // raw RGBA (with transparency) for compositing
+                if (dumpFramesLeft != 8 || q->pixels.empty()) continue;
+                FILE* f = std::fopen((dumpPrefix + (q == &quad ? "_panel.rgba" : "_dock.rgba")).c_str(), "wb");
+                if (f != nullptr) {
+                    std::fwrite(q->pixels.data(), 1, q->pixels.size(), f);
+                    std::fclose(f);
+                }
+            }
             if (dumpFramesLeft == 8 && !dock.pixels.empty()) {
                 FILE* f = std::fopen((dumpPrefix + "_dock.ppm").c_str(), "wb");
                 if (f != nullptr) {
@@ -994,7 +1073,10 @@ namespace {
                 const ViewSet& h = history[token % 16];
                 submitting = ((token != 0) && (h.token == token)) ? h : latest;
             }
-            if (submitting.token == 0) return false;
+            // Token 0: a flat frame (painted scene, or no head pose yet): shown on a screen in the world.
+            flatFrame = (token == 0) || (submitting.token == 0);
+            if (flatFrame && !flatPlaced) placeFlatScreen(predictedTime);
+            if (!flatFrame) flatPlaced = false;
 
             for (int e = 0; e < 2; e++) {
                 EyeSwapchain& sc = eyes[e];
@@ -1076,7 +1158,20 @@ namespace {
             XrFrameEndInfo fe{ XR_TYPE_FRAME_END_INFO };
             fe.displayTime = predictedTime;
             fe.environmentBlendMode = XR_ENVIRONMENT_BLEND_MODE_OPAQUE;
-            if (drawn && released && shouldRender) {
+            XrCompositionLayerQuad screen{ XR_TYPE_COMPOSITION_LAYER_QUAD };
+            if (drawn && released && shouldRender && flatFrame) {
+                // The game's own picture on a big screen in front of the player (both eyes see the same screen).
+                screen.space = localSpace;
+                screen.eyeVisibility = XR_EYE_VISIBILITY_BOTH;
+                screen.subImage.swapchain = eyes[0].handle;
+                screen.subImage.imageRect = { { 0, 0 }, { (int32_t)eyes[0].width, (int32_t)eyes[0].height } };
+                screen.pose = flatPose;
+                screen.size = { FLAT_WIDTH_M, FLAT_WIDTH_M * eyes[0].height / eyes[0].width };
+                layers[0] = reinterpret_cast<XrCompositionLayerBaseHeader*>(&screen);
+                fe.layerCount = layerCount;
+                fe.layers = layers;
+            }
+            else if (drawn && released && shouldRender) {
                 for (int e = 0; e < 2; e++) {
                     const RT64::VREye& eye = submitting.rt64.eyes[e];
                     pv[e] = { XR_TYPE_COMPOSITION_LAYER_PROJECTION_VIEW };

@@ -109,6 +109,20 @@ QUEST BUILD (sideload)
   (D:\AI\tools\openxr-android\arm64-v8a\libopenxr_loader.so, copied from the Angel's Table build).
 - The VR package skips the self-updater (it only knows the phone APK) and the touch controls.
 
+PAINTED SCENES (2026-11-27)
+- The title (stage 19) is a flat painting with 3D Pikachu/Butterfree on it. Redrawn with the headset's
+  wider camera, the 3D characters float off the painted ground. Fallback: flatScene() (hyp_vr.cpp,
+  stages from HYP_VR_FLAT_STAGES, default "19") makes RT64 render the game's own picture once, with
+  frame token 0. The present thread shows it as a 3.6 m quad 2.5 m in front of the player, placed when
+  the scene starts.
+- Stage ids come from the game's stage-load hook (hyp_current_stage(), debug_trace.cpp):
+  11 = loading, 23 = logos, 19 = title, 1 = Pikachu's house.
+- NEXT (the user's choice): 2.5D versions of the painted scenes. Estimate a depth map from each
+  painting and draw it as a depth-shaped mesh behind the 3D characters, lined up with the game camera
+  (the camera can be recovered from the combined matrix, as in applyVREyeCombined).
+- Dialogue backgrounds are a saved picture of the 3D room. The real fix there is to find the game code
+  that switches to the saved picture, so the room keeps drawing live (Ghidra).
+
 STILL OPEN
 - The game's 2D HUD/text still sits at the same place in both eyes (head-locked). Later: copy it onto
   a panel.

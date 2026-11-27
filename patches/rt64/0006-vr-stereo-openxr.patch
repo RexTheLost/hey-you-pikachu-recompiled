@@ -22,7 +22,7 @@ index f7e1c26..df318cd 100644
          RenderHookDeinit *deinitHook = GetRenderHookDeinit();
          if (deinitHook != nullptr) {
 diff --git a/src/hle/rt64_present_queue.cpp b/src/hle/rt64_present_queue.cpp
-index 15f0bd7..67956c0 100644
+index 15f0bd7..0cae462 100644
 --- a/src/hle/rt64_present_queue.cpp
 +++ b/src/hle/rt64_present_queue.cpp
 @@ -295,6 +295,33 @@ namespace RT64 {
@@ -59,7 +59,7 @@ index 15f0bd7..67956c0 100644
              uint32_t swapChainIndex = 0;
              const bool presentFrame = (i < framesToPresent) && swapChainValid;
              if (presentFrame) {
-@@ -403,6 +430,146 @@ namespace RT64 {
+@@ -403,6 +430,150 @@ namespace RT64 {
          }
      }
  
@@ -76,6 +76,10 @@ index 15f0bd7..67956c0 100644
 +            auto &frameViews = ext.sharedResources->vrFrameViews;
 +            if (frameIndex < frameViews.size()) {
 +                token = frameViews[frameIndex].token;
++            }
++
++            if (token == 0) {
++                rightTarget = leftTarget;       // a flat frame: the right eye wasn't rendered (stale image)
 +            }
 +        }
 +
@@ -206,7 +210,7 @@ index 15f0bd7..67956c0 100644
      void PresentQueue::skipInterpolation() {
          {
              std::unique_lock<std::mutex> interpolatedLock(ext.sharedResources->interpolatedMutex);
-@@ -510,7 +677,7 @@ namespace RT64 {
+@@ -510,7 +681,7 @@ namespace RT64 {
                      }
                  }
  
@@ -250,10 +254,10 @@ index 8858dac..9019b5f 100644
          std::mutex interpolatedMutex;
 diff --git a/src/hle/rt64_vr.h b/src/hle/rt64_vr.h
 new file mode 100644
-index 0000000..d8cac13
+index 0000000..f239467
 --- /dev/null
 +++ b/src/hle/rt64_vr.h
-@@ -0,0 +1,79 @@
+@@ -0,0 +1,83 @@
 +//
 +// RT64 VR (Hey You, Pikachu VR port)
 +//
@@ -319,6 +323,10 @@ index 0000000..d8cac13
 +        // Debug: a path prefix when the next presented frame's eye images should be saved (<prefix>_L.ppm / _R.ppm).
 +        virtual bool takeDumpRequest(std::string &prefix) { return false; }
 +
++        // True while the game shows a scene that can't be stereo (3D characters on a painted background):
++        // RT64 then renders the game's own picture once, and the frame is presented with token 0 (a flat screen).
++        virtual bool flatScene() { return false; }
++
 +        // Present thread, after both eyes: record extra GPU work (e.g. uploading the floating panel's pixels).
 +        // Return true if anything was recorded; RT64 then submits and waits for it before endPresent().
 +        virtual bool recordOverlay(RenderDevice *device, RenderCommandList *commandList) { return false; }
@@ -334,7 +342,7 @@ index 0000000..d8cac13
 +    inline bool VRActive() { VRInterface *vr = VRInterfaceSlot(); return (vr != nullptr) && vr->active(); }
 +};
 diff --git a/src/hle/rt64_workload_queue.cpp b/src/hle/rt64_workload_queue.cpp
-index 5b0b726..bc72f4d 100644
+index 5b0b726..ba5882f 100644
 --- a/src/hle/rt64_workload_queue.cpp
 +++ b/src/hle/rt64_workload_queue.cpp
 @@ -268,6 +268,7 @@ namespace RT64 {
@@ -371,12 +379,22 @@ index 5b0b726..bc72f4d 100644
              projectionProcessor.process(projParams);
              projectionProcessor.upload(projParams);
              uploadProjections = true;
-@@ -1025,6 +1027,31 @@ namespace RT64 {
+@@ -1025,6 +1027,41 @@ namespace RT64 {
                      }
                  }
                  
 +                // VR: each display frame is rendered twice. The left eye uses the usual target, the right eye its own.
-+                const bool vrStereo = VRActive() && !usingMSAA && !interpolationTargetKey.isEmpty();
++                const bool vrFlat = VRActive() && GetVRInterface()->flatScene();
++                const bool vrStereo = VRActive() && !vrFlat && !usingMSAA && !interpolationTargetKey.isEmpty();
++                if (VRActive() && !vrStereo) {
++                    // Flat frame: token 0 tells the present thread to show the one picture on a flat screen.
++                    if (ext.sharedResources->vrFrameViews.size() < displayFrames) {
++                        ext.sharedResources->vrFrameViews.resize(displayFrames);
++                    }
++                    for (uint32_t i = 0; i < displayFrames; i++) {
++                        ext.sharedResources->vrFrameViews[i] = VRFrameViews();
++                    }
++                }
 +                {
 +                    static uint32_t vrLogCounter = 0;
 +                    if (VRActive() && ((vrLogCounter++ % 120) == 0)) {
@@ -403,7 +421,7 @@ index 5b0b726..bc72f4d 100644
                  const int64_t originalTimeMicro = (workload.viOriginalRate > 0) ? (1000000 / workload.viOriginalRate) : 0;
                  const int64_t setupTimeMicro = workloadTimer.elapsedMicroseconds();
                  const int64_t adjustedTimeWindowMicro = originalTimeMicro - setupTimeMicro;
-@@ -1087,8 +1114,21 @@ namespace RT64 {
+@@ -1087,8 +1124,21 @@ namespace RT64 {
                      }
  
                      int64_t renderTimeMicro = workloadTimer.elapsedMicroseconds();

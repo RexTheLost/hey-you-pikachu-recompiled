@@ -2,6 +2,7 @@
 // [[patches.hook]] entries. Silent unless HYP_TRACE is set in the environment.
 #include "hyp_ramwatch.h"
 #include "hyp_control.h"
+#include <atomic>
 #include <chrono>
 #include <cstdio>
 #include <cstdlib>
@@ -19,7 +20,11 @@
 #include "hyp_vru.h"
 
 namespace {
-    int current_stage = -1;
+    std::atomic<int> current_stage{ -1 };     // read by the VR code on the render threads
+}
+
+int hyp_current_stage() {
+    return current_stage.load();
 }
 
 bool hyp_trace_enabled() {
@@ -121,7 +126,7 @@ extern "C" int hyp_trace_motion(uint8_t* rdram, recomp_context* ctx) {
     std::string heard = hyp::vru::mic_last_heard(3.0);
     std::fprintf(log, "%8.2f  stage %2d  obj %08X type %3d (0x%02X)  action %3d  motion %3d  mode %d%s%s\n",
                  std::chrono::duration<double>(std::chrono::steady_clock::now() - start).count(),
-                 current_stage, (uint32_t)obj, type, type & 0xFFFF, action, motion, mode,
+                 current_stage.load(), (uint32_t)obj, type, type & 0xFFFF, action, motion, mode,
                  heard.empty() ? "" : "  | heard: ", heard.c_str());
     std::fflush(log);
     return 0;
